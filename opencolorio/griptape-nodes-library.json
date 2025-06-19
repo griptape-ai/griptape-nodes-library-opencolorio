@@ -1,79 +1,83 @@
 {
-    "name": "Example Library",
+    "name": "OpenColorIO Library",
     "library_schema_version": "0.1.0",
+    "settings": [
+        {
+            "description": "Environment variables for OpenColorIO configuration",
+            "category": "opencolor",
+            "contents": {
+                "OCIO": "$OCIO"
+            }
+        }
+    ],
     "metadata": {
-        "author": "<Your-Name>",
-        "description": "<Your-Description>",
-        "library_version": "0.1.0",
-        "engine_version": "0.1.0",
+        "author": "OpenColorIO Node Library",
+        "description": "Professional color management and transformation tools using OpenColorIO",
+        "library_version": "1.0.0",
+        "engine_version": "0.37.0",
         "tags": [
-            "Griptape",
-            "AI",
-            "Examples"
-        ]
+            "OpenColorIO",
+            "OCIO",
+            "Color Management",
+            "VFX",
+            "Film",
+            "Animation",
+            "Post Production"
+        ],
+        "dependencies": {
+            "pip_dependencies": [
+                "opencolorio>=2.3.0",
+                "Pillow>=10.0.0",
+                "numpy>=1.24.0",
+                "imageio[pyexr]>=2.31.0"
+            ]
+        }
     },
     "categories": [
         {
-            "ControlNodes": {
-                "color": "border-red-500",
-                "title": "ControlNodes",
-                "description": "Example nodes of Control Type",
-                "icon": "Scale"
-            }
-        },
-        {
-            "DataNodes": {
-                "color": "border-purple-500",
-                "title": "DataNodes",
-                "description": "Example nodes of Data Type",
-                "icon": "Truck"
+            "opencolor": {
+                "color": "border-blue-500",
+                "title": "OpenColor",
+                "description": "Professional color management tools using OpenColorIO",
+                "icon": "Palette"
             }
         }
     ],
     "nodes": [
         {
-            "class_name": "CreateIntroduction",
-            "file_path": "create_introduction.py",
+            "class_name": "LoadOCIOConfig",
+            "file_path": "nodes/config/load_ocio_config.py",
             "metadata": {
-                "category": "ControlNodes",
-                "description": "Example Griptape Node that creates an introduction.",
-                "display_name": "Create an Introduction"
+                "category": "opencolor",
+                "description": "Load and validate OCIO configuration files",
+                "display_name": "Load OCIO Config"
             }
         },
         {
-            "class_name": "ConvertToPigLatin",
-            "file_path": "pig_latin.py",
+            "class_name": "ColorSpaceTransform",
+            "file_path": "nodes/transform/colorspace_transform.py",
             "metadata": {
-                "category": "ControlNodes",
-                "description": "Example Griptape Node that converts to pig latin",
-                "display_name": "Convert to Pig Latin"
+                "category": "opencolor",
+                "description": "Convert images between color spaces",
+                "display_name": "Color Space Transform"
             }
         },
         {
-            "class_name": "OpenAIChat",
-            "file_path": "openai_chat.py",
+            "class_name": "ColorSpaceAnalysis",
+            "file_path": "nodes/analysis/colorspace_analysis.py",
             "metadata": {
-                "category": "ControlNodes",
-                "description": "Example Griptape Node that displays how to account for dependencies.",
-                "display_name": "Example Dependency Node"
+                "category": "opencolor",
+                "description": "Analyze image color properties and statistics",
+                "display_name": "Color Space Analysis"
             }
         },
         {
-            "class_name": "CreateName",
-            "file_path": "create_name.py",
+            "class_name": "EXRLoader",
+            "file_path": "nodes/io/exr_loader.py",
             "metadata": {
-                "category": "DataNodes",
-                "description": "Example Griptape Node that creates a name.",
-                "display_name": "Create a Name"
-            }
-        },
-        {
-            "class_name": "Age",
-            "file_path": "age_node.py",
-            "metadata": {
-                "category": "DataNodes",
-                "description": "Example Griptape Node that sets an age.",
-                "display_name": "Set Age"
+                "category": "opencolor",
+                "description": "Load OpenEXR files for HDR color workflows",
+                "display_name": "EXR Loader"
             }
         }
     ]

@@ -1,19 +1,14 @@
 [project]
-name = "griptape-nodes-library-opencolorio"
+name = "example_nodes_template"
 version = "0.1.0"
-description = "OpenColorIO (OCIO) Griptape Node Library for professional color management"
+description = "Template for Users to create Custom Libraries and Nodes"
 authors = [
-    {name = "Griptape Community", email = "support@griptape.ai"}
+    {name = "Your Name", email = "you@example.com"}
 ]
 readme = "README.md"
 requires-python = "~=3.12"
 dependencies = [
     "griptape-nodes",
-    "PyOpenColorIO>=2.3.0",
-    "Pillow>=10.0.0",
-    "numpy>=1.24.0",
-    "requests>=2.28.0",
-    "imageio[pyexr]>=2.31.0",
 ]
 
 [tool.uv.sources]

@@ -1,1 +1,1 @@
-# I/O nodes for OpenColorIO library 
+# I/O nodes for OpenColorIO library

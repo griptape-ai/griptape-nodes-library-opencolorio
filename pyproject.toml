@@ -6,7 +6,7 @@ authors = [
     {name = "Griptape Community", email = "support@griptape.ai"}
 ]
 readme = "README.md"
-requires-python = "~=3.12"
+requires-python = "~=3.12.0"
 dependencies = [
     "griptape-nodes",
     "opencolorio>=2.3.0",

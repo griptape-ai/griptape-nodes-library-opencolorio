@@ -1,0 +1,49 @@
+{
+  "name": "OpenColorIO and EXR Library",
+  "library_schema_version": "0.6.0",
+  "settings": [],
+  "metadata": {
+    "author": "Griptape Community",
+    "description": "OpenColorIO and EXR file handling nodes for advanced color management and HDR workflows",
+    "library_version": "0.1.0",
+    "engine_version": "0.75.1",
+    "tags": [
+      "OpenColorIO",
+      "EXR",
+      "HDR",
+      "Color Management",
+      "VFX"
+    ],
+    "dependencies": {
+      "pip_dependencies": [
+        "OpenEXR>=3.4.0",
+        "numpy>=1.26.0",
+        "pillow>=11.2.1"
+      ]
+    }
+  },
+  "categories": [
+    {
+      "exr": {
+        "title": "EXR",
+        "description": "OpenEXR file handling nodes for HDR image processing",
+        "color": "border-orange-500",
+        "icon": "Image"
+      }
+    }
+  ],
+  "nodes": [
+    {
+      "class_name": "LoadEXR",
+      "file_path": "griptape_nodes_opencolorio/exr/load_exr.py",
+      "metadata": {
+        "category": "exr",
+        "description": "Load OpenEXR files with HDR data extraction and tone-mapped preview",
+        "display_name": "Load EXR",
+        "icon": "file-image",
+        "group": "load"
+      }
+    }
+  ],
+  "workflows": []
+}

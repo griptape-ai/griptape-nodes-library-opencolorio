@@ -43,6 +43,44 @@ class StorageType(StrEnum):
     TILED_IMAGE = "tiledimage"
 
 
+class PixelType(StrEnum):
+    """OpenEXR pixel types per channel."""
+
+    HALF = "half"
+    FLOAT = "float"
+    UINT = "uint"
+
+
+# Mapping dicts from opaque pybind11 OpenEXR enums to our serializable StrEnums.
+# OpenEXR enums are C++ wrappers (not str, not int, not JSON-serializable) —
+# these dicts are the bridge at the loading boundary.
+_COMPRESSION_MAP: dict = {getattr(OpenEXR.Compression, ct.name): ct for ct in CompressionType}
+_LINE_ORDER_MAP: dict = {getattr(OpenEXR.LineOrder, lo.name): lo for lo in LineOrderType}
+_STORAGE_MAP: dict = {
+    OpenEXR.Storage.scanlineimage: StorageType.SCANLINE_IMAGE,
+    OpenEXR.Storage.tiledimage: StorageType.TILED_IMAGE,
+}
+_PIXEL_TYPE_MAP: dict = {
+    OpenEXR.PixelType.HALF: PixelType.HALF,
+    OpenEXR.PixelType.FLOAT: PixelType.FLOAT,
+    OpenEXR.PixelType.UINT: PixelType.UINT,
+}
+
+
+def _map_exr_enum(mapping: dict, exr_value: Any, label: str) -> Any:
+    """Look up an OpenEXR enum in a mapping dict with a clear error on failure.
+
+    Raises:
+        ValueError: If the OpenEXR enum value is not in the mapping.
+    """
+    result = mapping.get(exr_value)
+    if result is not None:
+        return result
+    valid = ", ".join(str(v) for v in mapping.values())
+    msg = f"Unsupported {label}: {exr_value!r}. Supported values: {valid}"
+    raise ValueError(msg)
+
+
 class WindowCoordinates(NamedTuple):
     """EXR window coordinates (min and max corners)."""
 
@@ -71,12 +109,14 @@ class EXRChannel:
     Attributes:
         name: Channel name (e.g., "R", "G", "B", "Z", "beauty.R")
         pixels: Pixel data as NumPy array (float32)
+        pixel_type: Original pixel type from EXR file
         x_sampling: Horizontal sampling rate (usually 1)
         y_sampling: Vertical sampling rate (usually 1)
     """
 
     name: str
     pixels: np.ndarray
+    pixel_type: PixelType
     x_sampling: int
     y_sampling: int
 
@@ -270,12 +310,12 @@ def group_channels_into_layers(channels: list[EXRChannel]) -> list[EXRLayer]:
     layers = [EXRLayer(name=layer_name, channels=channels_list) for layer_name, channels_list in layers_dict.items()]
 
     # Sort: default layer ("") first, then alphabetically
-    layers.sort(key=lambda layer: ("" if layer.name == "" else f"~{layer.name}"))
+    layers.sort(key=lambda layer: (layer.name != "", layer.name))
 
     return layers
 
 
-def attempt_read_exr(file_path: str) -> EXRData:  # noqa: C901, PLR0912, PLR0915 - Complex data extraction
+def attempt_read_exr(file_path: str) -> EXRData:
     """Read OpenEXR file and extract ALL data with proper structure.
 
     Args:
@@ -314,33 +354,18 @@ def attempt_read_exr(file_path: str) -> EXRData:  # noqa: C901, PLR0912, PLR0915
                     msg = f"EXR file part {part.part_index} has no channels: {file_path}"
                     raise ValueError(msg)  # noqa: TRY301 - Simple validation check
 
-                # Build EXRChannel objects with metadata
+                # Build EXRChannel objects using structured Channel attributes.
+                # raw_channels values are Channel objects with .type(), .xSampling, .ySampling.
                 channels_list = []
                 for ch_name, ch_obj in raw_channels.items():
-                    # Find metadata for this channel from header's channel list
-                    # Channel objects have string representation: Channel("name", xSampling=1, ySampling=1)
-                    channel_name_prefix = f'Channel("{ch_name}"'
-                    ch_metadata = None
-                    for channel_obj in raw_header["channels"]:
-                        if str(channel_obj).startswith(channel_name_prefix):
-                            ch_metadata = channel_obj
-                            break
-
-                    x_sampling = 1  # Default
-                    y_sampling = 1  # Default
-                    if ch_metadata:
-                        # Parse xSampling, ySampling from Channel object string representation
-                        ch_str = str(ch_metadata)
-                        if "xSampling=" in ch_str:
-                            x_sampling = int(ch_str.split("xSampling=", maxsplit=1)[1].split(",", maxsplit=1)[0].split(")", maxsplit=1)[0])
-                        if "ySampling=" in ch_str:
-                            y_sampling = int(ch_str.split("ySampling=", maxsplit=1)[1].split(")", maxsplit=1)[0])
+                    pixel_type = _map_exr_enum(_PIXEL_TYPE_MAP, ch_obj.type(), "pixel type")
 
                     exr_channel = EXRChannel(
                         name=ch_name,
                         pixels=ch_obj.pixels.copy(),  # Copy before file closes
-                        x_sampling=x_sampling,
-                        y_sampling=y_sampling,
+                        pixel_type=pixel_type,
+                        x_sampling=ch_obj.xSampling,
+                        y_sampling=ch_obj.ySampling,
                     )
                     channels_list.append(exr_channel)
 
@@ -365,14 +390,17 @@ def attempt_read_exr(file_path: str) -> EXRData:  # noqa: C901, PLR0912, PLR0915
                     ymax=int(max_coords[1]),
                 )
 
+                # Normalize windows so display origin is at (0, 0)
+                data_window, display_window = _normalize_windows(data_window, display_window)
+
                 # Extract screen window center (numpy array -> tuple)
                 screen_center = raw_header["screenWindowCenter"]
                 screen_center_tuple = (float(screen_center[0]), float(screen_center[1]))
 
-                # Convert OpenEXR enums to StrEnums (will raise ValueError if unknown)
-                compression = CompressionType(raw_header["compression"].name)
-                line_order = LineOrderType(raw_header["lineOrder"].name)
-                storage_type = StorageType(raw_header["type"].name)
+                # Map OpenEXR enums to our StrEnums
+                compression = _map_exr_enum(_COMPRESSION_MAP, raw_header["compression"], "compression")
+                line_order = _map_exr_enum(_LINE_ORDER_MAP, raw_header["lineOrder"], "line order")
+                storage_type = _map_exr_enum(_STORAGE_MAP, raw_header["type"], "storage type")
 
                 # Separate required vs custom attributes
                 required_attrs = {
@@ -388,7 +416,9 @@ def attempt_read_exr(file_path: str) -> EXRData:  # noqa: C901, PLR0912, PLR0915
                     "name",
                     "chunkCount",
                 }
-                custom_attrs = {k: v for k, v in raw_header.items() if k not in required_attrs}
+                custom_attrs = {
+                    k: _convert_attribute_value(v) for k, v in raw_header.items() if k not in required_attrs
+                }
 
                 # Build EXRHeader
                 exr_header = EXRHeader(
@@ -436,6 +466,66 @@ def attempt_read_exr(file_path: str) -> EXRData:  # noqa: C901, PLR0912, PLR0915
         raise RuntimeError(msg) from e
 
 
+def _convert_attribute_value(value: Any) -> Any:
+    """Convert an OpenEXR attribute value to a clean Python type.
+
+    Handles common EXR metadata types so they serialize to JSON cleanly
+    instead of producing opaque repr() strings.
+    """
+    if isinstance(value, (str, int, float, bool)):
+        return value
+
+    if isinstance(value, (tuple, list)):
+        return [_convert_attribute_value(v) for v in value]
+
+    # NumPy scalar or array
+    if hasattr(value, "item"):
+        return value.item()
+    if hasattr(value, "tolist"):
+        return value.tolist()
+
+    # Fraction-like (framesPerSecond is typically a Fraction)
+    if hasattr(value, "numerator") and hasattr(value, "denominator"):
+        return {"numerator": value.numerator, "denominator": value.denominator}
+
+    return str(value)
+
+
+def _normalize_windows(
+    data_window: WindowCoordinates,
+    display_window: WindowCoordinates,
+) -> tuple[WindowCoordinates, WindowCoordinates]:
+    """Normalize windows so display window origin is at (0, 0).
+
+    Matches Nuke's offset_negative_display_window behavior (exrReader.cpp:1755-1793).
+    When the display window doesn't start at (0, 0), both windows are shifted so that
+    the display window minimum becomes the origin. This ensures coordinates are
+    consistent for downstream operations.
+
+    Returns:
+        Tuple of (normalized_data_window, normalized_display_window).
+    """
+    x_offset = display_window.xmin
+    y_offset = display_window.ymin
+
+    if x_offset == 0 and y_offset == 0:
+        return data_window, display_window
+
+    normalized_display = WindowCoordinates(
+        xmin=0,
+        ymin=0,
+        xmax=display_window.xmax - x_offset,
+        ymax=display_window.ymax - y_offset,
+    )
+    normalized_data = WindowCoordinates(
+        xmin=data_window.xmin - x_offset,
+        ymin=data_window.ymin - y_offset,
+        xmax=data_window.xmax - x_offset,
+        ymax=data_window.ymax - y_offset,
+    )
+    return normalized_data, normalized_display
+
+
 def _validate_multi_part_consistency(parts: list[EXRPart]) -> None:
     """Validate that all parts have consistent windows and metadata.
 
@@ -481,6 +571,12 @@ def _apply_legacy_part_name_prefix(parts: list[EXRPart]) -> None:
     If no channels in any part contain a '.' separator, the part's header name is
     prepended as a layer prefix and layers are re-grouped.
     """
+    # Nuke also checks for FULL_LAYER_NAMES metadata flag — if set, channels already
+    # contain full layer paths and part names should not be prepended.
+    has_full_layer_names = any(part.header.custom.get("fullLayerNames") for part in parts)
+    if has_full_layer_names:
+        return
+
     has_dotted_channels = any("." in ch.name for part in parts for ch in part.channels)
     if has_dotted_channels:
         return
@@ -555,9 +651,42 @@ def tone_map_reinhard(rgb: np.ndarray, exposure: float = 0.0, gamma: float = 2.2
     return apply_gamma(rgb, gamma)
 
 
+def tone_map_filmic(rgb: np.ndarray, exposure: float = 0.0, gamma: float = 2.2) -> np.ndarray:
+    """Filmic tone mapping based on John Hable's Uncharted 2 curve.
+
+    Args:
+        rgb: HDR RGB image data as NumPy array
+        exposure: Exposure adjustment in stops
+        gamma: Gamma correction value
+
+    Returns:
+        Tone-mapped RGB data in [0, 1] range
+    """
+    rgb = apply_exposure(rgb, exposure)
+
+    # Hable filmic curve parameters
+    a = 0.22  # Shoulder strength
+    b = 0.30  # Linear strength
+    c = 0.10  # Linear angle
+    d = 0.20  # Toe strength
+    e = 0.01  # Toe numerator
+    f = 0.30  # Toe denominator
+
+    rgb_mapped = ((rgb * (a * rgb + c * b) + d * e) / (rgb * (a * rgb + b) + d * f)) - e / f
+
+    # Normalize against white point
+    white_point = 11.2
+    white_mapped = (
+        (white_point * (a * white_point + c * b) + d * e) / (white_point * (a * white_point + b) + d * f)
+    ) - e / f
+    rgb_mapped = rgb_mapped / white_mapped
+
+    return apply_gamma(rgb_mapped, gamma)
+
+
 def tone_map(
     rgb: np.ndarray,
-    method: Literal["simple", "reinhard"] = "simple",
+    method: Literal["simple", "reinhard", "filmic"] = "simple",
     exposure: float = 0.0,
     gamma: float = 2.2,
 ) -> np.ndarray:
@@ -580,8 +709,10 @@ def tone_map(
             return tone_map_simple(rgb, exposure, gamma)
         case "reinhard":
             return tone_map_reinhard(rgb, exposure, gamma)
+        case "filmic":
+            return tone_map_filmic(rgb, exposure, gamma)
         case _:
-            msg = f"Unknown tone mapping method: '{method}'. Valid options: 'simple', 'reinhard'"
+            msg = f"Unknown tone mapping method: '{method}'. Valid options: 'simple', 'reinhard', 'filmic'"
             raise ValueError(msg)
 
 
@@ -760,7 +891,7 @@ def generate_exr_preview(  # noqa: PLR0913
     exr_data: EXRData,
     max_width: int = 1024,
     max_height: int = 1024,
-    tone_mapping_method: Literal["simple", "reinhard"] = "simple",
+    tone_mapping_method: Literal["simple", "reinhard", "filmic"] = "simple",
     exposure: float = 0.0,
     gamma: float = 2.2,
     part_index: int = 0,
@@ -800,7 +931,7 @@ def generate_layer_preview(  # noqa: PLR0913
     layer: EXRLayer,
     max_width: int = 512,
     max_height: int = 512,
-    tone_mapping_method: Literal["simple", "reinhard"] = "simple",
+    tone_mapping_method: Literal["simple", "reinhard", "filmic"] = "simple",
     exposure: float = 0.0,
     gamma: float = 2.2,
 ) -> Image.Image:

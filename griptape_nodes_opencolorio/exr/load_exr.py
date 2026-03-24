@@ -51,6 +51,7 @@ logger = logging.getLogger("griptape_nodes")
 class ToneMapping(StrEnum):
     SIMPLE = "simple"
     REINHARD = "reinhard"
+    FILMIC = "filmic"
 
 
 # Naming constants for dynamically created elements
@@ -257,7 +258,7 @@ class LoadEXR(SuccessFailureNode):
 
     # --- Process ---
 
-    def process(self) -> None:
+    async def aprocess(self) -> None:
         """Load the EXR file and populate all outputs."""
         self._clear_execution_status()
 
@@ -293,8 +294,8 @@ class LoadEXR(SuccessFailureNode):
         self.parameter_output_values[self._exr_data_param.name] = exr_data
 
         self._populate_exr_info(exr_data)
-        self._populate_part_previews(exr_data, tone_mapping)
-        self._populate_layers(exr_data, tone_mapping)
+        await self._populate_part_previews(exr_data, tone_mapping)
+        await self._populate_layers(exr_data, tone_mapping)
 
         # SUCCESS
         total_layers = sum(len(p.layers) for p in exr_data.parts)
@@ -318,7 +319,7 @@ class LoadEXR(SuccessFailureNode):
         """Populate the EXR Info output parameters from the first part's header."""
         header = exr_data.parts[0].header
 
-        self.parameter_output_values[self._compression_param.name] = str(header.compression)
+        self.parameter_output_values[self._compression_param.name] = header.compression.value
         self.parameter_output_values[self._part_count_param.name] = len(exr_data.parts)
         self.parameter_output_values[self._layer_count_param.name] = sum(
             len(p.layers) for p in exr_data.parts
@@ -335,12 +336,9 @@ class LoadEXR(SuccessFailureNode):
             f"{disp.xmin},{disp.ymin} - {disp.xmax},{disp.ymax}"
         )
 
-        if header.custom:
-            self.parameter_output_values[self._custom_attributes_param.name] = json.dumps(
-                {k: str(v) for k, v in header.custom.items()}, indent=2
-            )
-        else:
-            self.parameter_output_values[self._custom_attributes_param.name] = "{}"
+        self.parameter_output_values[self._custom_attributes_param.name] = json.dumps(
+            header.custom, indent=2, default=str
+        ) if header.custom else "{}"
 
     # --- Part composite previews ---
 
@@ -350,7 +348,7 @@ class LoadEXR(SuccessFailureNode):
         for child in children:
             self._part_preview_group.remove_child(child)
 
-    def _populate_part_previews(self, exr_data: EXRData, tone_mapping: str) -> None:
+    async def _populate_part_previews(self, exr_data: EXRData, tone_mapping: str) -> None:
         """Generate a composite preview image for each part inside the static group."""
         self._clear_part_previews()
 
@@ -379,7 +377,7 @@ class LoadEXR(SuccessFailureNode):
                 preview_image = generate_exr_preview(
                     exr_data, part_index=part.index, tone_mapping_method=tone_mapping  # type: ignore[arg-type]
                 )
-                preview_artifact = self._upload_pil_image(
+                preview_artifact = await self._upload_pil_image(
                     preview_image, f"{self.name}_{_PART_PREFIX}{part.index}_preview.png"
                 )
                 self.parameter_output_values[preview_param.name] = preview_artifact
@@ -394,7 +392,7 @@ class LoadEXR(SuccessFailureNode):
 
     # --- Layer management ---
 
-    def _populate_layers(self, exr_data: EXRData, tone_mapping: str) -> None:
+    async def _populate_layers(self, exr_data: EXRData, tone_mapping: str) -> None:
         """Create all layer groups (hidden) and set up the layer selector."""
         self._layer_groups = {}
         layer_choices: list[str] = []
@@ -404,7 +402,7 @@ class LoadEXR(SuccessFailureNode):
             for layer in part.layers:
                 key = _layer_key(layer, prefix)
                 layer_choices.append(key)
-                group = self._create_layer_group(layer, prefix, tone_mapping)
+                group = await self._create_layer_group(layer, prefix, tone_mapping)
                 self._layer_groups[key] = group
 
         # Update the Options trait with the new choices
@@ -418,7 +416,7 @@ class LoadEXR(SuccessFailureNode):
         self.set_parameter_value(self._view_layer_param.name, default_layer)
         self._show_selected_layer(default_layer)
 
-    def _create_layer_group(
+    async def _create_layer_group(
         self,
         layer: EXRLayer,
         part_prefix: str,
@@ -480,7 +478,7 @@ class LoadEXR(SuccessFailureNode):
         # Generate layer preview
         try:
             layer_preview = generate_layer_preview(layer, tone_mapping_method=tone_mapping)
-            layer_artifact = self._upload_pil_image(
+            layer_artifact = await self._upload_pil_image(
                 layer_preview, f"{self.name}_{group_name}{_LAYER_PREVIEW_SUFFIX}.png"
             )
             self.parameter_output_values[layer_preview_param.name] = layer_artifact
@@ -520,7 +518,7 @@ class LoadEXR(SuccessFailureNode):
 
     # --- Image upload helper ---
 
-    def _upload_pil_image(self, image: Image.Image, filename: str) -> ImageUrlArtifact:
+    async def _upload_pil_image(self, image: Image.Image, filename: str) -> ImageUrlArtifact:
         """Upload a PIL Image to static storage and return an ImageUrlArtifact.
 
         Args:
@@ -548,15 +546,16 @@ class LoadEXR(SuccessFailureNode):
             msg = f"Unexpected upload result type: {type(upload_result).__name__}"
             raise RuntimeError(msg)
 
-        # Upload bytes
-        response = httpx.request(
-            upload_result.method,
-            upload_result.url,
-            content=img_data,
-            headers=upload_result.headers,
-            timeout=60,
-        )
-        response.raise_for_status()
+        # Upload bytes asynchronously
+        async with httpx.AsyncClient() as client:
+            response = await client.request(
+                upload_result.method,
+                upload_result.url,
+                content=img_data,
+                headers=upload_result.headers,
+                timeout=60,
+            )
+            response.raise_for_status()
 
         # Get download URL
         download_request = CreateStaticFileDownloadUrlRequest(file_name=filename)

@@ -181,36 +181,57 @@ class EXRData:
     parts: list[EXRPart]
 
 
+def _sanitize_name_part(part: str) -> str:
+    """Sanitize a name part to match Nuke's ExrChannelNameToNuke behavior.
+
+    Strips leading digits and replaces non-alphanumeric characters with underscores.
+    """
+    # Strip leading digits
+    i = 0
+    while i < len(part) and part[i].isdigit():
+        i += 1
+    part = part[i:]
+
+    # Replace non-alphanumeric with underscores
+    return "".join(c if c.isalnum() else "_" for c in part)
+
+
 def parse_channel_name(full_name: str) -> ChannelNameParts:
     """Parse EXR channel name into layer and channel components.
 
+    Matches Nuke's ExrChannelNameToNuke.cpp behavior:
+    - Splits on '.' with max 3 parts (2 splits)
+    - Strips leading digits from each part
+    - Replaces non-alphanumeric characters with underscores
+    - All parts except last form the layer name (joined with '_')
+    - Last part is the channel name
+    - "Ci" layer (RenderMan default) maps to default layer
+
     Args:
-        full_name: Full channel name (e.g., "beauty.R", "R", "spec.indirect.G")
+        full_name: Full channel name (e.g., "beauty.R", "R", "View Layer.AO.R")
 
     Returns:
         ChannelNameParts with layer_name and channel_name
-        - layer_name: Empty string for default layer, otherwise layer prefix
-        - channel_name: The actual channel (R, G, B, A, Z, etc.)
 
     Examples:
         "R" → ChannelNameParts("", "R")
         "beauty.R" → ChannelNameParts("beauty", "R")
+        "View Layer.AO.R" → ChannelNameParts("View_Layer_AO", "R")
         "diffuse.indirect.R" → ChannelNameParts("diffuse_indirect", "R")
-        "Ci.R" → ChannelNameParts("", "R")  # Ci is RenderMan default layer
+        "Ci.R" → ChannelNameParts("", "R")
     """
-    # Split by period
-    parts = full_name.split(".")
+    # Split on '.', max 3 parts (matching Nuke's split that stops after 2 separators)
+    parts = full_name.split(".", maxsplit=2)
 
-    if len(parts) == 1:
-        # No prefix - default layer
-        return ChannelNameParts(layer_name="", channel_name=parts[0])
+    # Sanitize each part and drop empty results
+    sanitized = [s for p in parts if (s := _sanitize_name_part(p))]
 
-    # Last part is channel name
-    channel_name = parts[-1]
+    if len(sanitized) <= 1:
+        channel_name = sanitized[0] if sanitized else "unnamed"
+        return ChannelNameParts(layer_name="", channel_name=channel_name)
 
-    # Everything before is layer name (joined with underscores)
-    layer_parts = parts[:-1]
-    layer_name = "_".join(layer_parts)
+    channel_name = sanitized[-1]
+    layer_name = "_".join(sanitized[:-1])
 
     # Special case: "Ci" is RenderMan's default layer
     if layer_name == "Ci":
@@ -277,7 +298,7 @@ def attempt_read_exr(file_path: str) -> EXRData:  # noqa: C901, PLR0912, PLR0915
 
     # Load EXR using OpenEXR 3.4.x with context manager for resource cleanup
     try:
-        with OpenEXR.File(file_path) as exr:
+        with OpenEXR.File(file_path, separate_channels=True) as exr:
             # Get all parts (1 for single-part, >1 for multi-part)
             parts_list = exr.parts  # Property, not method
 
@@ -565,33 +586,20 @@ def tone_map(
 
 
 def _ensure_2d(pixels: np.ndarray) -> np.ndarray:
-    """Ensure channel pixel data is 2D (H, W), squeezing trailing size-1 dimensions.
+    """Validate that channel pixel data is 2D (H, W).
 
-    OpenEXR's Python bindings (3.4.x) sometimes return per-channel pixel arrays
-    with shape (H, W, 1) instead of the expected (H, W). When three such channels
-    are stacked via np.stack([r, g, b], axis=-1), the result is (H, W, 1, 3) — a
-    4D array that PIL.Image.fromarray rejects ("Too many dimensions: 4 > 3").
-
-    This helper strips trailing size-1 dimensions so that stacking always produces
-    a clean (H, W, 3) RGB array.
+    With separate_channels=True, OpenEXR should always return (H, W) arrays.
+    Any other shape indicates unexpected data that should not be silently coerced.
 
     Raises:
-        ValueError: If a trailing dimension has size > 1, which would indicate
-            genuinely multi-valued data (not a benign broadcasting artifact).
+        ValueError: If pixel data is not 2D.
     """
-    # Peel off trailing dimensions one at a time, but only if they are size 1.
-    # A size-1 trailing dim is just a broadcasting artifact from OpenEXR; a size > 1
-    # trailing dim would mean real data that we must not silently discard.
-    while pixels.ndim > 2:  # noqa: PLR2004
-        trailing_size = pixels.shape[-1]
-        if trailing_size != 1:
-            msg = (
-                f"Cannot squeeze trailing dimension of size {trailing_size} "
-                f"(shape {pixels.shape}). Expected size 1 — this may indicate "
-                f"unexpected multi-sample or interleaved channel data."
-            )
-            raise ValueError(msg)
-        pixels = pixels.squeeze(axis=-1)
+    if pixels.ndim != 2:  # noqa: PLR2004
+        msg = (
+            f"Expected 2D channel data (H, W), got shape {pixels.shape}. "
+            f"This may indicate interleaved or multi-sample data."
+        )
+        raise ValueError(msg)
     return pixels
 
 
@@ -638,21 +646,20 @@ def _positional_stack_rgb(pixel_arrays: list[np.ndarray]) -> np.ndarray:
 def _channels_to_rgb(channels: list[EXRChannel], *, strip_layer_prefix: bool = False) -> np.ndarray:
     """Assemble a (H, W, 3) RGB array from a list of EXR channels.
 
-    Strategy (in priority order):
-    1. If any channel's pixels are already 3D with last dim >= 3, treat it as
-       interleaved data (e.g. OpenEXR's combined "RGB" channel) and return directly.
-    2. Normalize all channels to 2D via _ensure_2d.
-    3. Try to find channels by semantic role (red/green/blue) using canonical name
-       normalization — this handles R/G/B, r/g/b, Red/Green/Blue, RED/GREEN/BLUE,
-       and crucially, BGR or any other ordering.
-    4. If role-based assembly fails (fewer than 3 recognized color channels), fall
-       back to positional: take channels in file order.
+    Expects separate per-channel data (loaded with separate_channels=True).
+
+    Strategy:
+    1. Validate all channels are 2D (H, W) via _ensure_2d.
+    2. Try role-based assembly (red/green/blue) using canonical name normalization —
+       handles R/G/B, r/g/b, Red/Green/Blue, RED/GREEN/BLUE, and BGR ordering.
+       Also handles Y/luminance as grayscale.
+    3. Positional fallback for non-standard channel names (H/S/V, Y/Pb/Pr, etc.):
        - 3+ channels: stack first 3
        - 2 channels: stack as [ch0, ch1, zeros]
        - 1 channel: grayscale [ch, ch, ch]
 
     Args:
-        channels: List of EXRChannel objects
+        channels: List of EXRChannel objects with 2D pixel data
         strip_layer_prefix: If True, strip layer prefix before role lookup
             (needed for layer channels named like "beauty.R")
 
@@ -660,25 +667,19 @@ def _channels_to_rgb(channels: list[EXRChannel], *, strip_layer_prefix: bool = F
         RGB data as NumPy array (H, W, 3)
 
     Raises:
-        ValueError: If channels list is empty
+        ValueError: If channels list is empty or any channel is not 2D
     """
     if not channels:
         msg = "No channels provided"
         raise ValueError(msg)
 
-    # Step 1: Check for already-interleaved channel data (shape H, W, 3+).
-    for ch in channels:
-        if ch.pixels.ndim >= 3 and ch.pixels.shape[-1] >= 3:  # noqa: PLR2004
-            # Already interleaved — take first 3 bands.
-            return ch.pixels[..., :3]
-
-    # Step 2: Normalize all channels to 2D (handles OpenEXR's (H,W,1) quirk).
+    # Step 1: Validate all channels are 2D.
     normalized: list[tuple[str, np.ndarray]] = []
     for ch in channels:
         short_name = parse_channel_name(ch.name).channel_name if strip_layer_prefix else ch.name
         normalized.append((short_name, _ensure_2d(ch.pixels)))
 
-    # Step 3: Try role-based assembly (red, green, blue).
+    # Step 2: Try role-based assembly (red, green, blue).
     by_role: dict[str, np.ndarray] = {}
     for name, pixels in normalized:
         role = _normalize_channel_role(name)
@@ -688,20 +689,24 @@ def _channels_to_rgb(channels: list[EXRChannel], *, strip_layer_prefix: bool = F
     if all(role in by_role for role in ("red", "green", "blue")):
         return np.stack([by_role["red"], by_role["green"], by_role["blue"]], axis=-1)
 
-    # Step 3b: Luminance-only — Nuke maps Y/y to all three RGB channels (grayscale).
+    # Step 2b: Luminance-only — Nuke maps Y/y to all three RGB channels (grayscale).
     if "luminance" in by_role:
         lum = by_role["luminance"]
         return np.stack([lum, lum, lum], axis=-1)
 
-    # Step 4: Positional fallback for non-standard channel names (H/S/V, Y/Pb/Pr, etc.).
+    # Step 3: Positional fallback for non-standard channel names (H/S/V, Y/Pb/Pr, etc.).
     return _positional_stack_rgb([pixels for _, pixels in normalized])
 
 
 def extract_rgb_from_exr_part(part: EXRPart) -> np.ndarray:
-    """Extract RGB data from an EXR part.
+    """Extract RGB data from an EXR part's top-level rgba channels.
+
+    Matches Nuke's behavior: finds bare R, G, B channels (no layer prefix)
+    directly in the part's channel list. Falls back to the first layer if
+    no top-level rgba channels exist.
 
     Args:
-        part: EXRPart containing channel data
+        part: EXRPart containing channel and layer data
 
     Returns:
         RGB data as NumPy array (H, W, 3)
@@ -712,7 +717,25 @@ def extract_rgb_from_exr_part(part: EXRPart) -> np.ndarray:
     if not part.channels:
         msg = "EXR part has no channels"
         raise ValueError(msg)
-    return _channels_to_rgb(part.channels)
+
+    # Find top-level rgba channels (no layer prefix) by semantic role
+    rgba_channels: list[EXRChannel] = []
+    for ch in part.channels:
+        parsed = parse_channel_name(ch.name)
+        if parsed.layer_name != "":
+            continue
+        role = _normalize_channel_role(parsed.channel_name)
+        if role in ("red", "green", "blue", "alpha"):
+            rgba_channels.append(ch)
+
+    if rgba_channels:
+        return _channels_to_rgb(rgba_channels, strip_layer_prefix=True)
+
+    # No top-level rgba — fall back to first layer
+    if not part.layers:
+        msg = "EXR part has no layers"
+        raise ValueError(msg)
+    return extract_rgb_from_layer(part.layers[0])
 
 
 def extract_rgb_from_layer(layer: EXRLayer) -> np.ndarray:

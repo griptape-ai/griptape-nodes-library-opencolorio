@@ -1,3 +1,5 @@
+SHELL := /bin/bash
+
 LIBRARY_JSON := opencolorio/griptape-nodes-library.json
 
 .PHONY: version/get

@@ -27,7 +27,7 @@
       "exr": {
         "title": "EXR",
         "description": "OpenEXR file handling nodes for HDR image processing",
-        "color": "border-orange-500",
+        "color": "border-teal-500",
         "icon": "Image"
       }
     }

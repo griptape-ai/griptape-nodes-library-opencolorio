@@ -20,6 +20,7 @@ from griptape_nodes.exe_types.core_types import (
 )
 from griptape_nodes.exe_types.node_types import SuccessFailureNode
 from griptape_nodes.exe_types.param_types.parameter_float import ParameterFloat
+from griptape_nodes.exe_types.param_types.parameter_button import ParameterButton
 from griptape_nodes.exe_types.param_types.parameter_int import ParameterInt
 from griptape_nodes.exe_types.param_types.parameter_string import ParameterString
 from griptape_nodes.retained_mode.events.os_events import OpenAssociatedFileRequest
@@ -70,7 +71,6 @@ class LoadEXR(SuccessFailureNode):
         super().__init__(name, metadata)
 
         self._cached_exr_data: EXRData | None = None
-        self._cached_file_path: str = ""
 
         # --- Top-level parameters ---
 
@@ -89,20 +89,13 @@ class LoadEXR(SuccessFailureNode):
         )
         self.add_parameter(self._file_path_param)
 
-        self._open_viewer_param = Parameter(
+        self._open_viewer_param = ParameterButton(
             name="open_in_viewer",
-            type="str",
-            default_value="",
+            label="Open in Viewer",
+            variant="secondary",
+            icon="external-link",
             tooltip="Open the EXR file in your OS default viewer",
-            allowed_modes={ParameterMode.PROPERTY},
-            traits={
-                Button(
-                    label="Open in Viewer",
-                    variant="secondary",
-                    icon="external-link",
-                    on_click=self._on_open_in_viewer,
-                )
-            },
+            on_click=self._on_open_in_viewer,
         )
         self.add_parameter(self._open_viewer_param)
 
@@ -277,7 +270,6 @@ class LoadEXR(SuccessFailureNode):
         """Scan the EXR header and populate UI. No full pixel load."""
         self._remove_dynamic_elements()
         self._cached_exr_data = None
-        self._cached_file_path = ""
 
         if not file_path:
             return
@@ -294,7 +286,6 @@ class LoadEXR(SuccessFailureNode):
             return
 
         self._cached_exr_data = exr_data
-        self._cached_file_path = file_path
 
         part = exr_data.parts[0]
 

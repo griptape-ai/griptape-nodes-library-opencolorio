@@ -11,12 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
-from io import BytesIO
-from typing import Any, cast
-
-import httpx
-from griptape.artifacts import ImageUrlArtifact
-from PIL import Image
+from typing import Any
 
 from griptape_nodes.exe_types.core_types import (
     Parameter,
@@ -25,33 +20,16 @@ from griptape_nodes.exe_types.core_types import (
 )
 from griptape_nodes.exe_types.node_types import SuccessFailureNode
 from griptape_nodes.exe_types.param_types.parameter_float import ParameterFloat
-from griptape_nodes.exe_types.param_types.parameter_image import ParameterImage
 from griptape_nodes.exe_types.param_types.parameter_int import ParameterInt
 from griptape_nodes.exe_types.param_types.parameter_string import ParameterString
 from griptape_nodes.retained_mode.events.os_events import OpenAssociatedFileRequest
-from griptape_nodes.retained_mode.events.static_file_events import (
-    CreateStaticFileDownloadUrlRequest,
-    CreateStaticFileDownloadUrlResultFailure,
-    CreateStaticFileDownloadUrlResultSuccess,
-    CreateStaticFileUploadUrlRequest,
-    CreateStaticFileUploadUrlResultFailure,
-    CreateStaticFileUploadUrlResultSuccess,
-)
 from griptape_nodes.retained_mode.griptape_nodes import GriptapeNodes
 from griptape_nodes.traits.button import Button, ButtonDetailsMessagePayload, NodeMessageResult
 from griptape_nodes.traits.file_system_picker import FileSystemPicker
-from griptape_nodes.traits.options import Options
-
 from griptape_nodes_opencolorio.exr.exr import (
-    EXRChannelInfo,
-    EXRChannelPixelData,
     EXRData,
     EXRLayer,
     EXRPart,
-    ToneMappingMethod,
-    generate_preview,
-    load_layer_pixels,
-    normalize_channel_role,
     parse_channel_name,
     scan_exr,
 )
@@ -65,7 +43,6 @@ logger = logging.getLogger("griptape_nodes")
 # Naming constants for dynamically created elements
 _PART_PREFIX = "part_"
 _LAYER_PREFIX = "layer_"
-_PREVIEW_SUFFIX = "_preview"
 _DEFAULT_LAYER_NAME = "default"
 
 
@@ -94,7 +71,6 @@ class LoadEXR(SuccessFailureNode):
 
         self._cached_exr_data: EXRData | None = None
         self._cached_file_path: str = ""
-        self._cached_tone_mapping = ToneMappingMethod.SIMPLE
 
         # --- Top-level parameters ---
 
@@ -113,15 +89,6 @@ class LoadEXR(SuccessFailureNode):
         )
         self.add_parameter(self._file_path_param)
 
-        self._tone_mapping_param = ParameterString(
-            name="tone_mapping",
-            default_value=ToneMappingMethod.SIMPLE.value,
-            tooltip="Tone mapping method for sRGB preview generation",
-            allowed_modes={ParameterMode.INPUT, ParameterMode.PROPERTY},
-            traits={Options(choices=[m.value for m in ToneMappingMethod])},
-        )
-        self.add_parameter(self._tone_mapping_param)
-
         self._open_viewer_param = Parameter(
             name="open_in_viewer",
             type="str",
@@ -138,50 +105,6 @@ class LoadEXR(SuccessFailureNode):
             },
         )
         self.add_parameter(self._open_viewer_param)
-
-        # --- Outputs ---
-
-        self._exr_file_param = Parameter(
-            name="exr_file",
-            display_name="EXR File",
-            type="EXRFileArtifact",
-            output_type="EXRFileArtifact",
-            tooltip="EXR file descriptor (path + headers, no pixel data)",
-            allowed_modes={ParameterMode.OUTPUT},
-        )
-        self.add_parameter(self._exr_file_param)
-
-        # --- Dynamic groups (children populated after scan) ---
-
-        self._parts_group = ParameterGroup(name="exr_parts")
-        self._parts_group.ui_options = {"display_name": "Parts"}
-        self.add_node_element(self._parts_group)
-
-        self._all_parts_param = Parameter(
-            name="all_parts",
-            display_name="All Parts",
-            type="list[EXRPartArtifact]",
-            output_type="list[EXRPartArtifact]",
-            tooltip="All parts in the EXR file",
-            allowed_modes={ParameterMode.OUTPUT},
-            settable=False,
-        )
-        self._parts_group.add_child(self._all_parts_param)
-
-        self._layers_group = ParameterGroup(name="exr_layers")
-        self._layers_group.ui_options = {"display_name": "Layers"}
-        self.add_node_element(self._layers_group)
-
-        self._all_layers_param = Parameter(
-            name="all_layers",
-            display_name="All Layers",
-            type="list[EXRLayerArtifact]",
-            output_type="list[EXRLayerArtifact]",
-            tooltip="All layers across all parts in the EXR file",
-            allowed_modes={ParameterMode.OUTPUT},
-            settable=False,
-        )
-        self._layers_group.add_child(self._all_layers_param)
 
         # --- Collapsed EXR Info group ---
         with ParameterGroup(name="EXR Info") as exr_info_group:
@@ -246,6 +169,50 @@ class LoadEXR(SuccessFailureNode):
 
         self.add_node_element(exr_info_group)
 
+        # --- Outputs ---
+
+        self._exr_file_param = Parameter(
+            name="exr_file",
+            display_name="EXR File",
+            type="EXRFileArtifact",
+            output_type="EXRFileArtifact",
+            tooltip="EXR file descriptor (path + headers, no pixel data)",
+            allowed_modes={ParameterMode.OUTPUT},
+        )
+        self.add_parameter(self._exr_file_param)
+
+        self._all_parts_param = Parameter(
+            name="all_parts",
+            display_name="All Parts",
+            type="list[EXRPartArtifact]",
+            output_type="list[EXRPartArtifact]",
+            tooltip="All parts in the EXR file",
+            allowed_modes={ParameterMode.OUTPUT},
+            settable=False,
+        )
+        self.add_parameter(self._all_parts_param)
+
+        self._all_layers_param = Parameter(
+            name="all_layers",
+            display_name="All Layers",
+            type="list[EXRLayerArtifact]",
+            output_type="list[EXRLayerArtifact]",
+            tooltip="All layers across all parts in the EXR file",
+            allowed_modes={ParameterMode.OUTPUT},
+            settable=False,
+        )
+        self.add_parameter(self._all_layers_param)
+
+        # --- Dynamic groups (children populated after scan) ---
+
+        self._parts_group = ParameterGroup(name="exr_parts")
+        self._parts_group.ui_options = {"display_name": "Parts"}
+        self.add_node_element(self._parts_group)
+
+        self._layers_group = ParameterGroup(name="exr_layers")
+        self._layers_group.ui_options = {"display_name": "Layers"}
+        self.add_node_element(self._layers_group)
+
         self._create_status_parameters(
             result_details_tooltip="Details about the EXR load result",
             result_details_placeholder="Load details will appear here.",
@@ -277,7 +244,7 @@ class LoadEXR(SuccessFailureNode):
         layer_names: list[str] = []
         for p in exr_data.parts:
             for layer in p.layers:
-                layer_names.append(layer.name or _DEFAULT_LAYER_NAME)
+                layer_names.append(layer.name or _DEFAULT_LAYER_NAME)  # noqa: PERF401
         details = f"Loaded {part.width}x{part.height}, {total_layers} layers: {', '.join(layer_names)}"
         self._set_status_results(was_successful=True, result_details=details)
 
@@ -328,9 +295,6 @@ class LoadEXR(SuccessFailureNode):
 
         self._cached_exr_data = exr_data
         self._cached_file_path = file_path
-        self._cached_tone_mapping = ToneMappingMethod(
-            self.get_parameter_value(self._tone_mapping_param.name) or ToneMappingMethod.SIMPLE.value
-        )
 
         part = exr_data.parts[0]
 
@@ -366,44 +330,15 @@ class LoadEXR(SuccessFailureNode):
         )
 
     def _populate_parts_group(self, file_path: str, exr_data: EXRData) -> None:
-        """Populate the Parts group with per-part preview and artifact, update All Parts."""
+        """Populate the Parts group with per-part artifact outputs, update All Parts."""
         all_part_artifacts: list[EXRPartArtifact] = []
+        is_multi_part = len(exr_data.parts) > 1
 
         for part in exr_data.parts:
             part_artifact = self._build_part_artifact(file_path, part.index)
             all_part_artifacts.append(part_artifact)
 
-            # Preview image
-            part_num = part.index + 1
-            preview_display = f"Part {part_num} (Preview Image)"
-
-            preview_param = ParameterImage(
-                name=f"{_PART_PREFIX}{part.index}{_PREVIEW_SUFFIX}",
-                display_name=preview_display,
-                allowed_modes={ParameterMode.OUTPUT},
-                tooltip=f"Tone-mapped sRGB composite preview of part {part.index}",
-                settable=False,
-            )
-            self._parts_group.add_child(preview_param)
-
-            try:
-                pixel_data = self._load_composite_channels(file_path, part)
-                preview_image = generate_preview(pixel_data, tone_mapping_method=self._cached_tone_mapping)
-                preview_artifact = self._upload_pil_image_sync(
-                    preview_image, f"{self.name}_{_PART_PREFIX}{part.index}_preview.png"
-                )
-                self.parameter_output_values[preview_param.name] = preview_artifact
-            except (ValueError, RuntimeError) as e:
-                logger.warning(
-                    "LoadEXR '%s': Composite preview for part %d failed: %s",
-                    self.name,
-                    part.index,
-                    e,
-                )
-                self.parameter_output_values[preview_param.name] = None
-
-            # Individual part artifact output
-            part_display = part.header.name or f"Part {part_num}"
+            part_display = self._build_part_display_name(part, is_multi_part=is_multi_part)
 
             part_param = Parameter(
                 name=f"{_PART_PREFIX}{part.index}",
@@ -443,39 +378,29 @@ class LoadEXR(SuccessFailureNode):
                     tooltip=f"Layer '{layer_display}' with channels: {channels_str}",
                     allowed_modes={ParameterMode.PROPERTY, ParameterMode.OUTPUT},
                     settable=False,
+                    hide_property=True,
                 )
                 self._layers_group.add_child(layer_param)
                 self.parameter_output_values[layer_param.name] = layer_artifact
 
         self.parameter_output_values[self._all_layers_param.name] = all_layer_artifacts
 
-    def _load_composite_channels(self, file_path: str, part: EXRPart) -> list[EXRChannelPixelData]:
-        """Load top-level RGBA channels (or first layer's channels) for composite preview.
+    def _build_part_display_name(self, part: EXRPart, *, is_multi_part: bool) -> str:
+        """Build a human-readable display name for a part parameter.
 
-        Returns:
-            Loaded pixel data for the selected channels.
-
-        Raises:
-            ValueError: If no suitable channels are found for composite preview.
+        Single-part: "Single Part" or "Single Part: rgba"
+        Multi-part:  "Part 1" or "Part 1: rgba"
         """
-        rgba_channels: list[EXRChannelInfo] = []
-        for ch in part.channels:
-            parsed = parse_channel_name(ch.name)
-            if parsed.layer_name != "":
-                continue
-            role = normalize_channel_role(parsed.channel_name)
-            if role in ("red", "green", "blue", "alpha"):
-                rgba_channels.append(ch)
+        part_name = part.header.name
 
-        if rgba_channels:
-            channels_to_load = rgba_channels
-        elif part.layers:
-            channels_to_load = part.layers[0].channels
+        if is_multi_part:
+            label = f"Part {part.index + 1}"
         else:
-            msg = f"LoadEXR '{self.name}': Attempted to load composite channels for part {part.index}. Failed because no RGBA or layer channels were found."
-            raise ValueError(msg)
+            label = "Single Part"
 
-        return load_layer_pixels(file_path, part.index, channels_to_load)
+        if part_name:
+            return f"{label}: {part_name}"
+        return label
 
     def _build_file_artifact(self, file_path: str, exr_data: EXRData) -> EXRFileArtifact:
         """Build an EXRFileArtifact from scanned EXR data."""
@@ -511,53 +436,9 @@ class LoadEXR(SuccessFailureNode):
         )
 
     def _remove_dynamic_elements(self) -> None:
-        """Remove dynamic children from Parts and Layers groups, keeping persistent params."""
+        """Remove all dynamic children from Parts and Layers groups."""
         for child in list(self._parts_group.children):
-            if child is not self._all_parts_param:
-                self._parts_group.remove_child(child)
+            self._parts_group.remove_child(child)
         for child in list(self._layers_group.children):
-            if child is not self._all_layers_param:
-                self._layers_group.remove_child(child)
+            self._layers_group.remove_child(child)
 
-    def _upload_pil_image_sync(self, image: Image.Image, filename: str) -> ImageUrlArtifact:
-        """Upload a PIL Image to static storage and return an ImageUrlArtifact.
-
-        Synchronous version for use in after_value_set callbacks.
-
-        Raises:
-            RuntimeError: If upload, HTTP request, or URL creation fails
-        """
-        img_bytes = BytesIO()
-        image.save(img_bytes, format="PNG")
-        img_data = img_bytes.getvalue()
-
-        upload_request = CreateStaticFileUploadUrlRequest(file_name=filename)
-        upload_result = GriptapeNodes.handle_request(upload_request)
-
-        if not isinstance(upload_result, CreateStaticFileUploadUrlResultSuccess):
-            failure = cast("CreateStaticFileUploadUrlResultFailure", upload_result)
-            msg = f"LoadEXR '{self.name}': Attempted to upload preview '{filename}'. Failed because: {failure.error}"
-            raise RuntimeError(msg)  # noqa: TRY004
-
-        response = httpx.request(
-            upload_result.method,
-            upload_result.url,
-            content=img_data,
-            headers=upload_result.headers,
-            timeout=60,
-        )
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as e:
-            msg = f"LoadEXR '{self.name}': Attempted to upload preview '{filename}'. Failed with HTTP {response.status_code}."
-            raise RuntimeError(msg) from e
-
-        download_request = CreateStaticFileDownloadUrlRequest(file_name=filename)
-        download_result = GriptapeNodes.handle_request(download_request)
-
-        if not isinstance(download_result, CreateStaticFileDownloadUrlResultSuccess):
-            failure = cast("CreateStaticFileDownloadUrlResultFailure", download_result)
-            msg = f"LoadEXR '{self.name}': Attempted to get download URL for '{filename}'. Failed because: {failure.error}"
-            raise RuntimeError(msg)  # noqa: TRY004
-
-        return ImageUrlArtifact(value=download_result.url)

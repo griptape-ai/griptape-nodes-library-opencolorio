@@ -1,18 +1,26 @@
-"""EXR data structures, I/O operations, and tone mapping utilities."""
+"""EXR data structures, I/O operations, and tone mapping utilities.
+
+Uses OpenImageIO (OIIO) for two-phase lazy loading:
+- scan_exr(): reads headers only (no pixels) — fast, for UI population
+- load_channels(): reads specific channels on demand — selective, for pixel access
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Literal, NamedTuple
+from typing import Any, NamedTuple
 
 import numpy as np
-import OpenEXR  # type: ignore[import-not-found]
+import OpenImageIO as oiio  # type: ignore[import-not-found]
 from PIL import Image
 
 
+# --- Enums ---
+
+
 class CompressionType(StrEnum):
-    """OpenEXR compression types (matches OpenEXR.Compression enum names)."""
+    """OpenEXR compression types."""
 
     NO_COMPRESSION = "NO_COMPRESSION"
     RLE_COMPRESSION = "RLE_COMPRESSION"
@@ -29,7 +37,7 @@ class CompressionType(StrEnum):
 
 
 class LineOrderType(StrEnum):
-    """OpenEXR line order types (matches OpenEXR.LineOrder enum names)."""
+    """OpenEXR line order types."""
 
     INCREASING_Y = "INCREASING_Y"
     DECREASING_Y = "DECREASING_Y"
@@ -37,7 +45,7 @@ class LineOrderType(StrEnum):
 
 
 class StorageType(StrEnum):
-    """OpenEXR storage types (matches OpenEXR.Storage enum names)."""
+    """OpenEXR storage types."""
 
     SCANLINE_IMAGE = "scanlineimage"
     TILED_IMAGE = "tiledimage"
@@ -51,34 +59,95 @@ class PixelType(StrEnum):
     UINT = "uint"
 
 
-# Mapping dicts from opaque pybind11 OpenEXR enums to our serializable StrEnums.
-# OpenEXR enums are C++ wrappers (not str, not int, not JSON-serializable) —
-# these dicts are the bridge at the loading boundary.
-_COMPRESSION_MAP: dict = {getattr(OpenEXR.Compression, ct.name): ct for ct in CompressionType}
-_LINE_ORDER_MAP: dict = {getattr(OpenEXR.LineOrder, lo.name): lo for lo in LineOrderType}
-_STORAGE_MAP: dict = {
-    OpenEXR.Storage.scanlineimage: StorageType.SCANLINE_IMAGE,
-    OpenEXR.Storage.tiledimage: StorageType.TILED_IMAGE,
+class ToneMappingMethod(StrEnum):
+    """Tone mapping algorithms for HDR to LDR conversion."""
+
+    SIMPLE = "simple"
+    REINHARD = "reinhard"
+    FILMIC = "filmic"
+
+
+# --- OIIO string → StrEnum mappings ---
+
+_OIIO_COMPRESSION_MAP: dict[str, CompressionType] = {
+    "none": CompressionType.NO_COMPRESSION,
+    "rle": CompressionType.RLE_COMPRESSION,
+    "zips": CompressionType.ZIPS_COMPRESSION,
+    "zip": CompressionType.ZIP_COMPRESSION,
+    "piz": CompressionType.PIZ_COMPRESSION,
+    "pxr24": CompressionType.PXR24_COMPRESSION,
+    "b44": CompressionType.B44_COMPRESSION,
+    "b44a": CompressionType.B44A_COMPRESSION,
+    "dwaa": CompressionType.DWAA_COMPRESSION,
+    "dwab": CompressionType.DWAB_COMPRESSION,
 }
-_PIXEL_TYPE_MAP: dict = {
-    OpenEXR.PixelType.HALF: PixelType.HALF,
-    OpenEXR.PixelType.FLOAT: PixelType.FLOAT,
-    OpenEXR.PixelType.UINT: PixelType.UINT,
+
+_OIIO_PIXEL_TYPE_MAP: dict[str, PixelType] = {
+    "half": PixelType.HALF,
+    "float": PixelType.FLOAT,
+    "uint32": PixelType.UINT,
+    "uint16": PixelType.UINT,
+    "uint8": PixelType.UINT,
+}
+
+_OIIO_LINE_ORDER_MAP: dict[str, LineOrderType] = {
+    "increasingY": LineOrderType.INCREASING_Y,
+    "decreasingY": LineOrderType.DECREASING_Y,
+    "randomY": LineOrderType.RANDOM_Y,
 }
 
 
-def _map_exr_enum(mapping: dict, exr_value: Any, label: str) -> Any:
-    """Look up an OpenEXR enum in a mapping dict with a clear error on failure.
+# --- OIIO attribute name constants ---
+# Used in both _HEADER_SKIP_ATTRS and _build_header_from_spec to avoid
+# silent breakage from typos in magic strings.
+
+_ATTR_COMPRESSION = "compression"
+_ATTR_LINE_ORDER = "openexr:lineOrder"
+_ATTR_CHUNK_COUNT = "openexr:chunkCount"
+_ATTR_NAME = "name"
+_ATTR_PIXEL_ASPECT_RATIO = "PixelAspectRatio"
+_ATTR_SCREEN_WINDOW_CENTER = "screenWindowCenter"
+_ATTR_SCREEN_WINDOW_WIDTH = "screenWindowWidth"
+
+
+# OIIO spec attributes that already map to dedicated EXRHeader fields.
+# Excluded from EXRHeader.custom to avoid duplication.
+_HEADER_SKIP_ATTRS: set[str] = {
+    _ATTR_COMPRESSION,
+    _ATTR_LINE_ORDER,
+    _ATTR_CHUNK_COUNT,
+    _ATTR_NAME,
+    "oiio:subimagename",
+    "oiio:subimages",
+    _ATTR_PIXEL_ASPECT_RATIO,
+    _ATTR_SCREEN_WINDOW_CENTER,
+    _ATTR_SCREEN_WINDOW_WIDTH,
+}
+
+
+def _map_oiio_string(mapping: dict[str, Any], oiio_value: str, label: str) -> Any:
+    """Look up an OIIO string in a mapping dict with a clear error on failure.
+
+    Args:
+        mapping: Dict mapping OIIO string values to our StrEnum members
+        oiio_value: The string value returned by OIIO
+        label: Human-readable name for error messages (e.g., "compression", "pixel type")
+
+    Returns:
+        The matched StrEnum member
 
     Raises:
-        ValueError: If the OpenEXR enum value is not in the mapping.
+        ValueError: If oiio_value is not found in the mapping
     """
-    result = mapping.get(exr_value)
+    result = mapping.get(oiio_value)
     if result is not None:
         return result
-    valid = ", ".join(str(v) for v in mapping.values())
-    msg = f"Unsupported {label}: {exr_value!r}. Supported values: {valid}"
+    valid = ", ".join(f"'{k}'" for k in mapping)
+    msg = f"Unsupported {label}: '{oiio_value}'. Supported values: {valid}"
     raise ValueError(msg)
+
+
+# --- Data Structures ---
 
 
 class WindowCoordinates(NamedTuple):
@@ -102,23 +171,55 @@ class ChannelNameParts(NamedTuple):
     channel_name: str
 
 
-@dataclass
-class EXRChannel:
-    """Channel data and metadata from an OpenEXR file.
+class NormalizedWindows(NamedTuple):
+    """Result of normalizing EXR data/display windows.
 
     Attributes:
-        name: Channel name (e.g., "R", "G", "B", "Z", "beauty.R")
-        pixels: Pixel data as NumPy array (float32)
-        pixel_type: Original pixel type from EXR file
-        x_sampling: Horizontal sampling rate (usually 1)
-        y_sampling: Vertical sampling rate (usually 1)
+        data: Data window with offset applied
+        display: Display window with origin at (0, 0)
     """
+
+    data: WindowCoordinates
+    display: WindowCoordinates
+
+
+class _NormalizedChannel(NamedTuple):
+    """Channel name paired with its 2D pixel data for RGB assembly."""
 
     name: str
     pixels: np.ndarray
+
+
+@dataclass
+class EXRChannelInfo:
+    """Channel metadata from an OpenEXR file (no pixel data).
+
+    Attributes:
+        name: Channel name (e.g., "R", "G", "B", "Z", "beauty.R")
+        pixel_type: Original pixel type from EXR file
+        channel_index: Index within the part's channel list (for OIIO reads)
+        x_sampling: Horizontal sampling rate
+        y_sampling: Vertical sampling rate
+    """
+
+    name: str
     pixel_type: PixelType
+    channel_index: int
     x_sampling: int
     y_sampling: int
+
+
+@dataclass
+class EXRChannelPixelData:
+    """Channel metadata paired with loaded pixel data.
+
+    Attributes:
+        info: Channel metadata
+        pixels: Pixel data as NumPy array (float32)
+    """
+
+    info: EXRChannelInfo
+    pixels: np.ndarray
 
 
 @dataclass
@@ -128,112 +229,79 @@ class EXRLayer:
     Attributes:
         name: Layer name (empty string for default/main layer)
         channels: List of channels in this layer
-
-    Access patterns:
-        # Get channel by name
-        channels_by_name = {ch.name: ch for ch in layer.channels}
-        r_channel = channels_by_name.get("R")
-
-        # Check if layer has RGBA
-        has_rgba = all(ch in channels_by_name for ch in ["R", "G", "B", "A"])
     """
 
     name: str
-    channels: list[EXRChannel]
+    channels: list[EXRChannelInfo]
 
 
 @dataclass
 class EXRHeader:
     """Header metadata from an OpenEXR file part.
 
-    Contains all required OpenEXR attributes plus optional/custom attributes.
-    Required attributes per OpenEXR specification:
-    - compression, line_order, data_window, display_window
-    - pixel_aspect_ratio, screen_window_center, screen_window_width, storage_type
-
-    Multi-part files also have: name, chunk_count
+    Attributes:
+        compression: Compression algorithm used for this part
+        line_order: Scanline storage order
+        data_window: Bounding box of actual pixel data
+        display_window: Intended display area (may differ from data window)
+        pixel_aspect_ratio: Width/height ratio of a single pixel (1.0 = square)
+        screen_window_center: Center of the screen window in NDC
+        screen_window_width: Width of the screen window in NDC
+        storage_type: Whether the part is scanline or tiled
+        name: Part name (empty string for single-part files)
+        chunk_count: Number of chunks (present in multi-part files, None otherwise)
+        custom: Non-standard header attributes (key-value pairs)
     """
 
-    # Required attributes (always present in valid EXR)
     compression: CompressionType
     line_order: LineOrderType
     data_window: WindowCoordinates
     display_window: WindowCoordinates
     pixel_aspect_ratio: float
-    screen_window_center: tuple[float, float]  # (x, y)
+    screen_window_center: tuple[float, float]
     screen_window_width: float
     storage_type: StorageType
-
-    # Multi-part attributes (present only in multi-part files)
-    name: str  # Part name (empty string for single-part)
-    chunk_count: int | None  # Present in multi-part files
-
-    # Custom/optional attributes
-    custom: dict[str, Any]  # User-defined attributes (renderTime, owner, etc.)
+    name: str
+    chunk_count: int | None
+    custom: dict[str, Any]
 
 
 @dataclass
 class EXRPart:
     """Single part from an OpenEXR file.
 
-    Multi-part EXR files have multiple parts, each with independent:
-    - Channels (different channel sets per part)
-    - Header (different compression, attributes per part)
-    - Metadata (name, index)
-
-    Single-part files have exactly one part.
-
-    Access patterns:
-        # Legacy flat access
-        channels_by_name = {ch.name: ch for ch in part.channels}
-        rgb_pixels = channels_by_name["R"].pixels
-
-        # New layer-based access
-        layers_by_name = {layer.name: layer for layer in part.layers}
-        beauty_layer = layers_by_name.get("beauty")
-        if beauty_layer:
-            beauty_r = next(ch for ch in beauty_layer.channels if ch.name.endswith(".R"))
-
-        # Default layer access
-        default_layer = next(l for l in part.layers if l.name == "")
+    Attributes:
+        channels: All channels in this part (pixels may or may not be loaded)
+        layers: Channels grouped by layer name prefix
+        header: Full EXR header metadata for this part
+        index: Zero-based part index within the file
+        width: Image width in pixels (derived from data window)
+        height: Image height in pixels (derived from data window)
     """
 
-    channels: list[EXRChannel]  # Flat list for backward compatibility
-    layers: list[EXRLayer]  # Structured layer access
+    channels: list[EXRChannelInfo]
+    layers: list[EXRLayer]
     header: EXRHeader
-    index: int  # Part index (0-based)
-    width: int  # From part.width
-    height: int  # From part.height
+    index: int
+    width: int
+    height: int
 
 
 @dataclass
 class EXRData:
     """All data extracted from an OpenEXR file.
 
-    Contains list of parts (1 for single-part, N for multi-part).
+    Returned by scan_exr(). After scanning, all channels have pixels=None.
+    Use load_layer_pixels() or load_channels() to populate pixel data on demand.
 
-    Access patterns:
-        Single-part: exr_data.parts[0].channels
-        Multi-part: exr_data.parts[1].channels
-        Find part by name: next(p for p in exr_data.parts if p.header.name == "beauty")
+    Attributes:
+        parts: List of parts in the file (single-part files have one entry)
     """
 
     parts: list[EXRPart]
 
 
-def _sanitize_name_part(part: str) -> str:
-    """Sanitize a name part to match Nuke's ExrChannelNameToNuke behavior.
-
-    Strips leading digits and replaces non-alphanumeric characters with underscores.
-    """
-    # Strip leading digits
-    i = 0
-    while i < len(part) and part[i].isdigit():
-        i += 1
-    part = part[i:]
-
-    # Replace non-alphanumeric with underscores
-    return "".join(c if c.isalnum() else "_" for c in part)
+# --- Channel Name Parsing (Nuke-compatible) ---
 
 
 def parse_channel_name(full_name: str) -> ChannelNameParts:
@@ -247,24 +315,18 @@ def parse_channel_name(full_name: str) -> ChannelNameParts:
     - Last part is the channel name
     - "Ci" layer (RenderMan default) maps to default layer
 
-    Args:
-        full_name: Full channel name (e.g., "beauty.R", "R", "View Layer.AO.R")
-
-    Returns:
-        ChannelNameParts with layer_name and channel_name
-
     Examples:
         "R" → ChannelNameParts("", "R")
         "beauty.R" → ChannelNameParts("beauty", "R")
         "View Layer.AO.R" → ChannelNameParts("View_Layer_AO", "R")
-        "diffuse.indirect.R" → ChannelNameParts("diffuse_indirect", "R")
         "Ci.R" → ChannelNameParts("", "R")
     """
-    # Split on '.', max 3 parts (matching Nuke's split that stops after 2 separators)
     parts = full_name.split(".", maxsplit=2)
-
-    # Sanitize each part and drop empty results
-    sanitized = [s for p in parts if (s := _sanitize_name_part(p))]
+    sanitized: list[str] = []
+    for p in parts:
+        s = _sanitize_name_part(p)
+        if s:
+            sanitized.append(s)
 
     if len(sanitized) <= 1:
         channel_name = sanitized[0] if sanitized else "unnamed"
@@ -273,30 +335,18 @@ def parse_channel_name(full_name: str) -> ChannelNameParts:
     channel_name = sanitized[-1]
     layer_name = "_".join(sanitized[:-1])
 
-    # Special case: "Ci" is RenderMan's default layer
     if layer_name == "Ci":
         layer_name = ""
 
     return ChannelNameParts(layer_name=layer_name, channel_name=channel_name)
 
 
-def group_channels_into_layers(channels: list[EXRChannel]) -> list[EXRLayer]:
+def group_channels_into_layers(channels: list[EXRChannelInfo]) -> list[EXRLayer]:
     """Group channels by layer name.
 
-    Args:
-        channels: Flat list of channels from EXR part
-
-    Returns:
-        List of EXRLayer objects, sorted by layer name (default layer first)
-
-    Example:
-        Input channels: ["R", "G", "B", "beauty.R", "beauty.G", "Z"]
-        Output layers:
-        - Layer(name="", channels=["R", "G", "B", "Z"])
-        - Layer(name="beauty", channels=["beauty.R", "beauty.G"])
+    Returns list of EXRLayer objects, sorted by layer name (default layer first).
     """
-    # Group channels by layer name
-    layers_dict: dict[str, list[EXRChannel]] = {}
+    layers_dict: dict[str, list[EXRChannelInfo]] = {}
 
     for channel in channels:
         parsed = parse_channel_name(channel.name)
@@ -306,177 +356,362 @@ def group_channels_into_layers(channels: list[EXRChannel]) -> list[EXRLayer]:
             layers_dict[layer_name] = []
         layers_dict[layer_name].append(channel)
 
-    # Convert to list of EXRLayer objects
-    layers = [EXRLayer(name=layer_name, channels=channels_list) for layer_name, channels_list in layers_dict.items()]
-
-    # Sort: default layer ("") first, then alphabetically
+    layers: list[EXRLayer] = []
+    for layer_name, channels_list in layers_dict.items():
+        layers.append(EXRLayer(name=layer_name, channels=channels_list))
     layers.sort(key=lambda layer: (layer.name != "", layer.name))
-
     return layers
 
 
-def attempt_read_exr(file_path: str) -> EXRData:
-    """Read OpenEXR file and extract ALL data with proper structure.
+def _sanitize_name_part(part: str) -> str:
+    """Sanitize a name part to match Nuke's ExrChannelNameToNuke behavior.
+
+    Strips leading digits and replaces non-alphanumeric characters with underscores.
+    """
+    i = 0
+    while i < len(part) and part[i].isdigit():
+        i += 1
+    part = part[i:]
+    return "".join(c if c.isalnum() else "_" for c in part)
+
+
+# --- OIIO-based I/O ---
+
+
+def scan_exr(file_path: str) -> EXRData:
+    """Scan an EXR file's headers without loading pixel data.
+
+    Uses OIIO to read metadata for all parts. Returns EXRData with full
+    structure (headers, channels, layers) but pixels=None on all channels.
 
     Args:
         file_path: Path to the EXR file
 
     Returns:
-        EXRData containing list of EXRPart objects with structured headers
+        EXRData with metadata only (no pixel data)
 
     Raises:
-        ValueError: If file_path is empty, EXR has no channels, or unknown enum values
-        RuntimeError: If EXR loading fails (includes FileNotFoundError from OpenEXR)
-
-    Note:
-        Supports multi-part EXR files. Each part is returned as separate EXRPart.
+        ValueError: If file_path is empty or file has no valid parts
+        RuntimeError: If OIIO fails to open the file
     """
-    # FAILURES FIRST
     if not file_path:
         msg = "file_path must not be empty"
         raise ValueError(msg)
 
-    # Load EXR using OpenEXR 3.4.x with context manager for resource cleanup
+    inp = oiio.ImageInput.open(file_path)
+    if not inp:
+        msg = f"Failed to open EXR file '{file_path}': {oiio.geterror()}"
+        raise RuntimeError(msg)
+
     try:
-        with OpenEXR.File(file_path, separate_channels=True) as exr:
-            # Get all parts (1 for single-part, >1 for multi-part)
-            parts_list = exr.parts  # Property, not method
+        exr_parts: list[EXRPart] = []
+        subimage_idx = 0
 
-            # Extract each part with all its data
-            exr_parts = []
-            for part in parts_list:
-                # Get raw header dict and channels dict
-                raw_header = part.header  # Property, not method
-                raw_channels = part.channels  # Property, not method
+        while inp.seek_subimage(subimage_idx, 0):
+            spec = inp.spec()
 
-                # FAILURES - No channels in this part
-                if not raw_channels:
-                    msg = f"EXR file part {part.part_index} has no channels: {file_path}"
-                    raise ValueError(msg)  # noqa: TRY301 - Simple validation check
+            # Build channel list with metadata (no pixels)
+            channels_list: list[EXRChannelInfo] = []
+            for ch_idx in range(spec.nchannels):
+                ch_name = spec.channelnames[ch_idx]
+                ch_format = str(spec.channelformat(ch_idx))
+                pixel_type = _map_oiio_string(_OIIO_PIXEL_TYPE_MAP, ch_format, "pixel type")
 
-                # Build EXRChannel objects using structured Channel attributes.
-                # raw_channels values are Channel objects with .type(), .xSampling, .ySampling.
-                channels_list = []
-                for ch_name, ch_obj in raw_channels.items():
-                    pixel_type = _map_exr_enum(_PIXEL_TYPE_MAP, ch_obj.type(), "pixel type")
-
-                    exr_channel = EXRChannel(
+                channels_list.append(
+                    EXRChannelInfo(
                         name=ch_name,
-                        pixels=ch_obj.pixels.copy(),  # Copy before file closes
                         pixel_type=pixel_type,
-                        x_sampling=ch_obj.xSampling,
-                        y_sampling=ch_obj.ySampling,
+                        channel_index=ch_idx,
+                        x_sampling=1,
+                        y_sampling=1,
                     )
-                    channels_list.append(exr_channel)
-
-                # Extract required header attributes
-                data_window_raw = raw_header["dataWindow"]
-                display_window_raw = raw_header["displayWindow"]
-
-                # Convert raw tuples to WindowCoordinates
-                min_coords, max_coords = data_window_raw
-                data_window = WindowCoordinates(
-                    xmin=int(min_coords[0]),
-                    ymin=int(min_coords[1]),
-                    xmax=int(max_coords[0]),
-                    ymax=int(max_coords[1]),
                 )
 
-                min_coords, max_coords = display_window_raw
-                display_window = WindowCoordinates(
-                    xmin=int(min_coords[0]),
-                    ymin=int(min_coords[1]),
-                    xmax=int(max_coords[0]),
-                    ymax=int(max_coords[1]),
-                )
+            if not channels_list:
+                msg = f"EXR file part {subimage_idx} has no channels: {file_path}"
+                raise ValueError(msg)
 
-                # Normalize windows so display origin is at (0, 0)
-                data_window, display_window = _normalize_windows(data_window, display_window)
+            # Build header from OIIO spec
+            header = _build_header_from_spec(spec)
 
-                # Extract screen window center (numpy array -> tuple)
-                screen_center = raw_header["screenWindowCenter"]
-                screen_center_tuple = (float(screen_center[0]), float(screen_center[1]))
+            # Build EXRPart
+            data_win = header.data_window
+            width = data_win.xmax - data_win.xmin + 1
+            height = data_win.ymax - data_win.ymin + 1
 
-                # Map OpenEXR enums to our StrEnums
-                compression = _map_exr_enum(_COMPRESSION_MAP, raw_header["compression"], "compression")
-                line_order = _map_exr_enum(_LINE_ORDER_MAP, raw_header["lineOrder"], "line order")
-                storage_type = _map_exr_enum(_STORAGE_MAP, raw_header["type"], "storage type")
+            exr_part = EXRPart(
+                channels=channels_list,
+                layers=group_channels_into_layers(channels_list),
+                header=header,
+                index=subimage_idx,
+                width=width,
+                height=height,
+            )
+            exr_parts.append(exr_part)
+            subimage_idx += 1
 
-                # Separate required vs custom attributes
-                required_attrs = {
-                    "channels",
-                    "compression",
-                    "dataWindow",
-                    "displayWindow",
-                    "lineOrder",
-                    "pixelAspectRatio",
-                    "screenWindowCenter",
-                    "screenWindowWidth",
-                    "type",
-                    "name",
-                    "chunkCount",
-                }
-                custom_attrs = {
-                    k: _convert_attribute_value(v) for k, v in raw_header.items() if k not in required_attrs
-                }
+        if not exr_parts:
+            msg = f"EXR file has no parts: {file_path}"
+            raise ValueError(msg)
 
-                # Build EXRHeader
-                exr_header = EXRHeader(
-                    compression=compression,
-                    line_order=line_order,
-                    data_window=data_window,
-                    display_window=display_window,
-                    pixel_aspect_ratio=raw_header["pixelAspectRatio"],
-                    screen_window_center=screen_center_tuple,
-                    screen_window_width=raw_header["screenWindowWidth"],
-                    storage_type=storage_type,
-                    name=raw_header.get("name", ""),
-                    chunk_count=raw_header.get("chunkCount", None),
-                    custom=custom_attrs,
-                )
+        if len(exr_parts) > 1:
+            _apply_legacy_part_name_prefix(exr_parts)
 
-                # Build EXRPart (using Part's built-in width/height/index)
-                exr_part = EXRPart(
-                    channels=channels_list,
-                    layers=group_channels_into_layers(channels_list),
-                    header=exr_header,
-                    index=part.part_index,
-                    width=part.width(),
-                    height=part.height(),
-                )
-                exr_parts.append(exr_part)
+        return EXRData(parts=exr_parts)
 
-            # FAILURES - No parts at all
-            if not exr_parts:
-                msg = f"EXR file has no parts: {file_path}"
-                raise ValueError(msg)  # noqa: TRY301 - Simple validation check
+    finally:
+        inp.close()
 
-            # Multi-part validation: Nuke requires consistent windows across parts.
-            if len(exr_parts) > 1:
-                _validate_multi_part_consistency(exr_parts)
-                _apply_legacy_part_name_prefix(exr_parts)
 
-            # SUCCESS PATH - Return everything extracted
-            return EXRData(parts=exr_parts)
+def _group_contiguous_runs(indices: list[int]) -> list[list[int]]:
+    """Group sorted indices into contiguous runs.
 
-    except ValueError:
-        raise
-    except Exception as e:
-        msg = f"Failed to load EXR file '{file_path}': {e}"
-        raise RuntimeError(msg) from e
+    For example, [0, 1, 2, 5, 6, 9] becomes [[0, 1, 2], [5, 6], [9]].
+    Used to batch OIIO channel reads for efficiency.
+    """
+    sorted_indices = sorted(indices)
+    runs: list[list[int]] = []
+    current_run: list[int] = []
+
+    for idx in sorted_indices:
+        if current_run and idx != current_run[-1] + 1:
+            runs.append(current_run)
+            current_run = []
+        current_run.append(idx)
+
+    if current_run:
+        runs.append(current_run)
+
+    return runs
+
+
+def load_channels(
+    file_path: str,
+    part_index: int,
+    channel_indices: list[int],
+) -> dict[int, np.ndarray]:
+    """Load specific channels from an EXR file by index.
+
+    Opens the file, seeks to the part, and reads only the requested
+    channel indices. Groups contiguous indices into single read calls
+    for efficiency.
+
+    Args:
+        file_path: Path to the EXR file
+        part_index: Part index (maps to OIIO subimage)
+        channel_indices: List of channel indices to load
+
+    Returns:
+        Dict mapping channel index → 2D float32 array (H, W)
+
+    Raises:
+        RuntimeError: If OIIO fails to open or read the file
+        ValueError: If channel_indices is empty
+    """
+    if not channel_indices:
+        msg = "channel_indices must not be empty"
+        raise ValueError(msg)
+
+    inp = oiio.ImageInput.open(file_path)
+    if not inp:
+        msg = f"Failed to open EXR file '{file_path}': {oiio.geterror()}"
+        raise RuntimeError(msg)
+
+    try:
+        if not inp.seek_subimage(part_index, 0):
+            msg = f"Failed to seek to part {part_index} in '{file_path}'"
+            raise RuntimeError(msg)
+
+        spec = inp.spec()
+        result: dict[int, np.ndarray] = {}
+
+        # Group indices into contiguous runs for efficient reads
+        runs = _group_contiguous_runs(channel_indices)
+        for run in runs:
+            chbegin = run[0]
+            chend = run[-1] + 1
+
+            pixels = inp.read_image(part_index, 0, chbegin, chend, "float")
+            if pixels is None:
+                msg = f"Failed to read channels {chbegin}-{chend} from part {part_index}: {oiio.geterror()}"
+                raise RuntimeError(msg)
+
+            # Split multi-channel result into individual 2D arrays
+            if pixels.ndim == 3:  # noqa: PLR2004
+                for i, ch_idx in enumerate(run):
+                    result[ch_idx] = pixels[:, :, i]
+            else:
+                # Single channel — already 2D or (H, W, 1)
+                result[run[0]] = pixels.reshape(spec.height, spec.width)
+
+        return result
+
+    finally:
+        inp.close()
+
+
+def load_layer_pixels(
+    file_path: str,
+    part_index: int,
+    channels: list[EXRChannelInfo],
+) -> list[EXRChannelPixelData]:
+    """Load pixel data for a list of channels and return paired results.
+
+    Convenience wrapper around load_channels() that pairs each channel's
+    metadata with its loaded pixel data.
+
+    Args:
+        file_path: Path to the EXR file
+        part_index: Part index (maps to OIIO subimage)
+        channels: Channel metadata (channel_index used for OIIO reads)
+
+    Returns:
+        List of EXRChannelPixelData pairing each channel's info with its pixels
+    """
+    indices = [ch.channel_index for ch in channels]
+    pixel_data = load_channels(file_path, part_index, indices)
+
+    result: list[EXRChannelPixelData] = []
+    for ch in channels:
+        result.append(EXRChannelPixelData(info=ch, pixels=pixel_data[ch.channel_index]))  # noqa: PERF401
+    return result
+
+
+def _require_string_attribute(spec: oiio.ImageSpec, name: str) -> str:
+    """Get a required string attribute from an OIIO ImageSpec.
+
+    Args:
+        spec: OIIO ImageSpec to query
+        name: Attribute name to look up
+
+    Returns:
+        The attribute's string value
+
+    Raises:
+        ValueError: If the attribute is not present in the spec
+    """
+    sentinel = "__MISSING__"
+    value = spec.get_string_attribute(name, sentinel)
+    if value == sentinel:
+        msg = f"Required EXR header attribute '{name}' is missing"
+        raise ValueError(msg)
+    return value
+
+
+def _build_header_from_spec(spec: oiio.ImageSpec) -> EXRHeader:
+    """Build an EXRHeader from an OIIO ImageSpec.
+
+    Extracts all standard EXR header fields from the OIIO spec, normalizes
+    windows so display origin is at (0, 0), and collects non-standard
+    attributes into the custom dict.
+
+    Args:
+        spec: OIIO ImageSpec from an open EXR file part
+
+    Returns:
+        Fully populated EXRHeader
+    """
+    # Data window from spec coordinates
+    data_window = WindowCoordinates(
+        xmin=spec.x,
+        ymin=spec.y,
+        xmax=spec.x + spec.width - 1,
+        ymax=spec.y + spec.height - 1,
+    )
+
+    # Display window from full coordinates
+    display_window = WindowCoordinates(
+        xmin=spec.full_x,
+        ymin=spec.full_y,
+        xmax=spec.full_x + spec.full_width - 1,
+        ymax=spec.full_y + spec.full_height - 1,
+    )
+
+    # Normalize windows so display origin is at (0, 0)
+    normalized = _normalize_windows(data_window, display_window)
+    data_window = normalized.data
+    display_window = normalized.display
+
+    # Compression (required by EXR spec)
+    comp_str = _require_string_attribute(spec, _ATTR_COMPRESSION)
+    compression = _map_oiio_string(_OIIO_COMPRESSION_MAP, comp_str, "compression")
+
+    # Line order (required by EXR spec)
+    lo_str = _require_string_attribute(spec, _ATTR_LINE_ORDER)
+    line_order = _map_oiio_string(_OIIO_LINE_ORDER_MAP, lo_str, "line order")
+
+    # Storage type — OIIO doesn't expose this directly for reads,
+    # but tiled images have tile dimensions > 0
+    if spec.tile_width > 0:
+        storage_type = StorageType.TILED_IMAGE
+    else:
+        storage_type = StorageType.SCANLINE_IMAGE
+
+    # Screen window
+    screen_center_attr = None
+    for attr in spec.extra_attribs:
+        if attr.name == _ATTR_SCREEN_WINDOW_CENTER:
+            screen_center_attr = attr.value
+            break
+    if screen_center_attr is not None:
+        screen_center = (float(screen_center_attr[0]), float(screen_center_attr[1]))  # type: ignore[index]
+    else:
+        screen_center = (0.0, 0.0)
+
+    # Optional per EXR spec — defaults are spec-defined
+    screen_width = spec.get_float_attribute(_ATTR_SCREEN_WINDOW_WIDTH, 1.0)
+    pixel_aspect = spec.get_float_attribute(_ATTR_PIXEL_ASPECT_RATIO, 1.0)
+
+    # Part name and chunk count
+    part_name = spec.get_string_attribute(_ATTR_NAME, "")
+    chunk_count_val = spec.get_int_attribute(_ATTR_CHUNK_COUNT, -1)
+    chunk_count = chunk_count_val if chunk_count_val >= 0 else None
+
+    # Custom attributes — exclude known/required attributes
+    custom: dict[str, Any] = {}
+    for attr in spec.extra_attribs:
+        if attr.name not in _HEADER_SKIP_ATTRS:
+            custom[attr.name] = _convert_attribute_value(attr.value)
+
+    return EXRHeader(
+        compression=compression,
+        line_order=line_order,
+        data_window=data_window,
+        display_window=display_window,
+        pixel_aspect_ratio=pixel_aspect,
+        screen_window_center=screen_center,
+        screen_window_width=screen_width,
+        storage_type=storage_type,
+        name=part_name,
+        chunk_count=chunk_count,
+        custom=custom,
+    )
 
 
 def _convert_attribute_value(value: Any) -> Any:
-    """Convert an OpenEXR attribute value to a clean Python type.
+    """Convert an OIIO attribute value to a serializable Python type.
 
-    Handles common EXR metadata types so they serialize to JSON cleanly
-    instead of producing opaque repr() strings.
+    OIIO returns attributes as various types (NumPy scalars, byte strings,
+    arrays). This normalizes them to plain Python types suitable for JSON
+    serialization or display.
+
+    Args:
+        value: Raw attribute value from OIIO's extra_attribs
+
+    Returns:
+        Python-native equivalent (str, int, float, bool, list, or str fallback)
     """
     if isinstance(value, (str, int, float, bool)):
         return value
 
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+
     if isinstance(value, (tuple, list)):
-        return [_convert_attribute_value(v) for v in value]
+        converted: list[Any] = []
+        for v in value:
+            converted.append(_convert_attribute_value(v))  # noqa: PERF401
+        return converted
 
     # NumPy scalar or array
     if hasattr(value, "item"):
@@ -484,32 +719,32 @@ def _convert_attribute_value(value: Any) -> Any:
     if hasattr(value, "tolist"):
         return value.tolist()
 
-    # Fraction-like (framesPerSecond is typically a Fraction)
-    if hasattr(value, "numerator") and hasattr(value, "denominator"):
-        return {"numerator": value.numerator, "denominator": value.denominator}
-
     return str(value)
 
 
 def _normalize_windows(
     data_window: WindowCoordinates,
     display_window: WindowCoordinates,
-) -> tuple[WindowCoordinates, WindowCoordinates]:
-    """Normalize windows so display window origin is at (0, 0).
+) -> NormalizedWindows:
+    """Normalize EXR windows so display window origin is at (0, 0).
 
-    Matches Nuke's offset_negative_display_window behavior (exrReader.cpp:1755-1793).
-    When the display window doesn't start at (0, 0), both windows are shifted so that
-    the display window minimum becomes the origin. This ensures coordinates are
-    consistent for downstream operations.
+    EXR files can have non-zero display window origins. This shifts both
+    windows by the display window's offset so the display origin lands at
+    (0, 0) while preserving the relative position of the data window.
+    Matches Nuke's offset_negative_display_window behavior.
+
+    Args:
+        data_window: Original data window coordinates from EXR header
+        display_window: Original display window coordinates from EXR header
 
     Returns:
-        Tuple of (normalized_data_window, normalized_display_window).
+        NormalizedWindows with both windows offset-adjusted
     """
     x_offset = display_window.xmin
     y_offset = display_window.ymin
 
     if x_offset == 0 and y_offset == 0:
-        return data_window, display_window
+        return NormalizedWindows(data=data_window, display=display_window)
 
     normalized_display = WindowCoordinates(
         xmin=0,
@@ -523,56 +758,17 @@ def _normalize_windows(
         xmax=data_window.xmax - x_offset,
         ymax=data_window.ymax - y_offset,
     )
-    return normalized_data, normalized_display
-
-
-def _validate_multi_part_consistency(parts: list[EXRPart]) -> None:
-    """Validate that all parts have consistent windows and metadata.
-
-    Nuke (exrReader.cpp:1935-1943) requires multi-part EXRs to have the same
-    data window, display window, pixel aspect ratio, and line order across all parts.
-
-    Raises:
-        ValueError: If any part differs from part 0.
-    """
-    ref = parts[0]
-    for part in parts[1:]:
-        if part.header.data_window != ref.header.data_window:
-            msg = (
-                f"Multi-part EXR has inconsistent data windows: "
-                f"part 0={ref.header.data_window}, part {part.index}={part.header.data_window}"
-            )
-            raise ValueError(msg)
-        if part.header.display_window != ref.header.display_window:
-            msg = (
-                f"Multi-part EXR has inconsistent display windows: "
-                f"part 0={ref.header.display_window}, part {part.index}={part.header.display_window}"
-            )
-            raise ValueError(msg)
-        if part.header.pixel_aspect_ratio != ref.header.pixel_aspect_ratio:
-            msg = (
-                f"Multi-part EXR has inconsistent pixel aspect ratios: "
-                f"part 0={ref.header.pixel_aspect_ratio}, part {part.index}={part.header.pixel_aspect_ratio}"
-            )
-            raise ValueError(msg)
-        if part.header.line_order != ref.header.line_order:
-            msg = (
-                f"Multi-part EXR has inconsistent line orders: "
-                f"part 0={ref.header.line_order}, part {part.index}={part.header.line_order}"
-            )
-            raise ValueError(msg)
+    return NormalizedWindows(data=normalized_data, display=normalized_display)
 
 
 def _apply_legacy_part_name_prefix(parts: list[EXRPart]) -> None:
     """Detect and handle legacy multi-part files that use part names as layer names.
 
-    Nuke (exrReader.cpp:1887-1924) auto-detects legacy multi-part files where the
-    part name stores the layer name (channels are just R, G, B without '.' separators).
-    If no channels in any part contain a '.' separator, the part's header name is
+    Nuke auto-detects legacy multi-part files where the part name stores the
+    layer name (channels are just R, G, B without '.' separators). If no
+    channels in any part contain a '.' separator, the part's header name is
     prepended as a layer prefix and layers are re-grouped.
     """
-    # Nuke also checks for FULL_LAYER_NAMES metadata flag — if set, channels already
-    # contain full layer paths and part names should not be prepended.
     has_full_layer_names = any(part.header.custom.get("fullLayerNames") for part in parts)
     if has_full_layer_names:
         return
@@ -594,41 +790,45 @@ def _apply_legacy_part_name_prefix(parts: list[EXRPart]) -> None:
 
 
 def apply_exposure(rgb: np.ndarray, exposure: float = 0.0) -> np.ndarray:
-    """Apply exposure adjustment in stops.
+    """Apply exposure adjustment in stops (each stop doubles/halves brightness).
 
     Args:
-        rgb: RGB image data as NumPy array
-        exposure: Exposure adjustment in stops
+        rgb: Float pixel data, any shape
+        exposure: Exposure adjustment in stops (0.0 = no change)
 
     Returns:
-        Exposure-adjusted RGB data
+        Exposure-adjusted pixel data (same shape as input)
     """
     return rgb * (2.0**exposure)
 
 
 def apply_gamma(rgb: np.ndarray, gamma: float = 2.2) -> np.ndarray:
-    """Apply gamma correction.
+    """Apply gamma correction (linear to display transfer function).
+
+    Negative values are clamped to zero before the power function.
 
     Args:
-        rgb: RGB image data as NumPy array (values should be non-negative)
-        gamma: Gamma correction value
+        rgb: Float pixel data, any shape
+        gamma: Gamma value (2.2 approximates sRGB)
 
     Returns:
-        Gamma-corrected RGB data
+        Gamma-corrected pixel data (same shape as input)
     """
     return np.power(np.maximum(rgb, 0.0), 1.0 / gamma)
 
 
 def tone_map_simple(rgb: np.ndarray, exposure: float = 0.0, gamma: float = 2.2) -> np.ndarray:
-    """Simple tone mapping: exposure + clamp + gamma.
+    """Simple tone mapping: exposure, clamp [0, 1], gamma.
+
+    Clips HDR values to [0, 1] after exposure. Fast but loses highlight detail.
 
     Args:
-        rgb: HDR RGB image data as NumPy array
-        exposure: Exposure adjustment in stops
+        rgb: HDR float pixel data, any shape
+        exposure: Exposure in stops
         gamma: Gamma correction value
 
     Returns:
-        Tone-mapped RGB data in [0, 1] range
+        LDR pixel data in [0, 1] range
     """
     rgb = apply_exposure(rgb, exposure)
     rgb = np.clip(rgb, 0.0, 1.0)
@@ -638,13 +838,16 @@ def tone_map_simple(rgb: np.ndarray, exposure: float = 0.0, gamma: float = 2.2) 
 def tone_map_reinhard(rgb: np.ndarray, exposure: float = 0.0, gamma: float = 2.2) -> np.ndarray:
     """Reinhard tone mapping operator.
 
+    Applies the global Reinhard curve: L / (1 + L). Compresses HDR range
+    smoothly — preserves more highlight detail than simple clamp.
+
     Args:
-        rgb: HDR RGB image data as NumPy array
-        exposure: Exposure adjustment in stops
+        rgb: HDR float pixel data, any shape
+        exposure: Exposure in stops
         gamma: Gamma correction value
 
     Returns:
-        Tone-mapped RGB data in [0, 1] range
+        LDR pixel data in [0, 1] range
     """
     rgb = apply_exposure(rgb, exposure)
     rgb = rgb / (1.0 + rgb)
@@ -654,17 +857,19 @@ def tone_map_reinhard(rgb: np.ndarray, exposure: float = 0.0, gamma: float = 2.2
 def tone_map_filmic(rgb: np.ndarray, exposure: float = 0.0, gamma: float = 2.2) -> np.ndarray:
     """Filmic tone mapping based on John Hable's Uncharted 2 curve.
 
+    S-shaped curve with shoulder rolloff and toe. Produces a cinematic look
+    with controlled highlight compression. Uses a fixed white point of 11.2.
+
     Args:
-        rgb: HDR RGB image data as NumPy array
-        exposure: Exposure adjustment in stops
+        rgb: HDR float pixel data, any shape
+        exposure: Exposure in stops
         gamma: Gamma correction value
 
     Returns:
-        Tone-mapped RGB data in [0, 1] range
+        LDR pixel data in [0, 1] range
     """
     rgb = apply_exposure(rgb, exposure)
 
-    # Hable filmic curve parameters
     a = 0.22  # Shoulder strength
     b = 0.30  # Linear strength
     c = 0.10  # Linear angle
@@ -674,7 +879,6 @@ def tone_map_filmic(rgb: np.ndarray, exposure: float = 0.0, gamma: float = 2.2) 
 
     rgb_mapped = ((rgb * (a * rgb + c * b) + d * e) / (rgb * (a * rgb + b) + d * f)) - e / f
 
-    # Normalize against white point
     white_point = 11.2
     white_mapped = (
         (white_point * (a * white_point + c * b) + d * e) / (white_point * (a * white_point + b) + d * f)
@@ -686,57 +890,39 @@ def tone_map_filmic(rgb: np.ndarray, exposure: float = 0.0, gamma: float = 2.2) 
 
 def tone_map(
     rgb: np.ndarray,
-    method: Literal["simple", "reinhard", "filmic"] = "simple",
+    method: ToneMappingMethod = ToneMappingMethod.SIMPLE,
     exposure: float = 0.0,
     gamma: float = 2.2,
 ) -> np.ndarray:
     """Apply tone mapping using the selected algorithm.
 
     Args:
-        rgb: HDR RGB image data as NumPy array
-        method: Tone mapping algorithm
-        exposure: Exposure adjustment in stops
+        rgb: HDR float pixel data, any shape
+        method: Tone mapping algorithm — "simple", "reinhard", or "filmic"
+        exposure: Exposure in stops
         gamma: Gamma correction value
 
     Returns:
-        Tone-mapped RGB data in [0, 1] range
+        LDR pixel data in [0, 1] range
 
     Raises:
         ValueError: If tone mapping method is not recognized
     """
-    match method.lower():
-        case "simple":
+    match method:
+        case ToneMappingMethod.SIMPLE:
             return tone_map_simple(rgb, exposure, gamma)
-        case "reinhard":
+        case ToneMappingMethod.REINHARD:
             return tone_map_reinhard(rgb, exposure, gamma)
-        case "filmic":
+        case ToneMappingMethod.FILMIC:
             return tone_map_filmic(rgb, exposure, gamma)
         case _:
-            msg = f"Unknown tone mapping method: '{method}'. Valid options: 'simple', 'reinhard', 'filmic'"
+            msg = f"Unknown tone mapping method: '{method}'. Valid: {[m.value for m in ToneMappingMethod]}"
             raise ValueError(msg)
 
 
-def _ensure_2d(pixels: np.ndarray) -> np.ndarray:
-    """Validate that channel pixel data is 2D (H, W).
-
-    With separate_channels=True, OpenEXR should always return (H, W) arrays.
-    Any other shape indicates unexpected data that should not be silently coerced.
-
-    Raises:
-        ValueError: If pixel data is not 2D.
-    """
-    if pixels.ndim != 2:  # noqa: PLR2004
-        msg = (
-            f"Expected 2D channel data (H, W), got shape {pixels.shape}. "
-            f"This may indicate interleaved or multi-sample data."
-        )
-        raise ValueError(msg)
-    return pixels
+# --- Channel Role Mapping & RGB Assembly ---
 
 
-# Canonical channel role mapping, inspired by Nuke's ExrChannelNameToNuke.cpp.
-# Maps all known name variants (case-insensitive) to a semantic role so that
-# channel assembly is order-independent — a BGR file still produces correct RGB.
 _CHANNEL_ROLE_MAP: dict[str, str] = {
     "r": "red",
     "red": "red",
@@ -752,19 +938,107 @@ _CHANNEL_ROLE_MAP: dict[str, str] = {
 }
 
 
-def _normalize_channel_role(name: str) -> str | None:
-    """Map a channel name to a canonical role, or None if unrecognized.
+def normalize_channel_role(name: str) -> str | None:
+    """Map a channel name to a canonical role.
 
-    Handles case variations: R/r/Red/RED all map to "red", etc.
+    Recognizes standard EXR channel names and their abbreviations:
+    R/red, G/green, B/blue, A/alpha, Y/luminance, Z/depth.
+
+    Args:
+        name: Channel name (case-insensitive)
+
+    Returns:
+        Canonical role string, or None if the name is not a recognized channel role
     """
     return _CHANNEL_ROLE_MAP.get(name.lower())
 
 
-def _positional_stack_rgb(pixel_arrays: list[np.ndarray]) -> np.ndarray:
-    """Stack 2D pixel arrays positionally into (H, W, 3) RGB.
+def extract_rgb_from_channels(channels: list[EXRChannelPixelData]) -> np.ndarray:
+    """Extract RGB data from loaded channels, matching Nuke's behavior.
 
-    Takes the first 3 channels in file order. For fewer than 3 channels:
-    2 channels → [ch0, ch1, zeros], 1 channel → grayscale [ch, ch, ch].
+    Looks for bare R, G, B, A channels (no layer prefix) first. If none
+    are found, falls back to using all channels positionally.
+
+    Args:
+        channels: Loaded channel pixel data
+
+    Returns:
+        (H, W, 3) float32 RGB array
+
+    Raises:
+        ValueError: If no channels are provided
+    """
+    if not channels:
+        msg = "No channels provided"
+        raise ValueError(msg)
+
+    rgba_channels: list[EXRChannelPixelData] = []
+    for ch in channels:
+        parsed = parse_channel_name(ch.info.name)
+        if parsed.layer_name != "":
+            continue
+        role = normalize_channel_role(parsed.channel_name)
+        if role in ("red", "green", "blue", "alpha"):
+            rgba_channels.append(ch)
+
+    if rgba_channels:
+        return _channels_to_rgb(rgba_channels, strip_layer_prefix=True)
+
+    return _channels_to_rgb(channels, strip_layer_prefix=True)
+
+
+def extract_rgb_from_layer(channels: list[EXRChannelPixelData]) -> np.ndarray:
+    """Extract RGB data from loaded layer channels.
+
+    Args:
+        channels: Loaded channel pixel data for a layer
+
+    Returns:
+        (H, W, 3) float32 RGB array
+
+    Raises:
+        ValueError: If no channels are provided
+    """
+    if not channels:
+        msg = "No channels provided"
+        raise ValueError(msg)
+    return _channels_to_rgb(channels, strip_layer_prefix=True)
+
+
+def _ensure_2d(pixels: np.ndarray) -> np.ndarray:
+    """Validate that channel pixel data is 2D (H, W).
+
+    Args:
+        pixels: NumPy array to validate
+
+    Returns:
+        The same array, unchanged (for chaining)
+
+    Raises:
+        ValueError: If pixel data is not 2D
+    """
+    if pixels.ndim != 2:  # noqa: PLR2004
+        msg = (
+            f"Expected 2D channel data (H, W), got shape {pixels.shape}. "
+            f"This may indicate interleaved or multi-sample data."
+        )
+        raise ValueError(msg)
+    return pixels
+
+
+def _positional_stack_rgb(pixel_arrays: list[np.ndarray]) -> np.ndarray:
+    """Stack 2D pixel arrays positionally into an (H, W, 3) RGB array.
+
+    Fallback when role-based assembly isn't possible. Uses channels in order:
+    - 3+ channels: first three become R, G, B
+    - 2 channels: two channels + zero-filled blue
+    - 1 channel: broadcast to grayscale
+
+    Args:
+        pixel_arrays: List of 2D (H, W) float32 arrays
+
+    Returns:
+        (H, W, 3) RGB array
     """
     if len(pixel_arrays) >= 3:  # noqa: PLR2004
         return np.stack(pixel_arrays[:3], axis=-1)
@@ -774,181 +1048,84 @@ def _positional_stack_rgb(pixel_arrays: list[np.ndarray]) -> np.ndarray:
     return np.stack([pixel_arrays[0], pixel_arrays[0], pixel_arrays[0]], axis=-1)
 
 
-def _channels_to_rgb(channels: list[EXRChannel], *, strip_layer_prefix: bool = False) -> np.ndarray:
-    """Assemble a (H, W, 3) RGB array from a list of EXR channels.
+def _channels_to_rgb(channels: list[EXRChannelPixelData], *, strip_layer_prefix: bool = False) -> np.ndarray:
+    """Assemble a (H, W, 3) RGB array from a list of loaded channels.
 
-    Expects separate per-channel data (loaded with separate_channels=True).
-
-    Strategy:
-    1. Validate all channels are 2D (H, W) via _ensure_2d.
-    2. Try role-based assembly (red/green/blue) using canonical name normalization —
-       handles R/G/B, r/g/b, Red/Green/Blue, RED/GREEN/BLUE, and BGR ordering.
-       Also handles Y/luminance as grayscale.
-    3. Positional fallback for non-standard channel names (H/S/V, Y/Pb/Pr, etc.):
-       - 3+ channels: stack first 3
-       - 2 channels: stack as [ch0, ch1, zeros]
-       - 1 channel: grayscale [ch, ch, ch]
+    Assembly strategy (first match wins):
+    1. Role-based: if R, G, B roles are all present, use them
+    2. Luminance: if a Y/luminance channel exists, broadcast to grayscale
+    3. Positional: stack channels by position (first 3 become R, G, B)
 
     Args:
-        channels: List of EXRChannel objects with 2D pixel data
-        strip_layer_prefix: If True, strip layer prefix before role lookup
-            (needed for layer channels named like "beauty.R")
+        channels: Channels with loaded pixel data
+        strip_layer_prefix: If True, parse channel names to extract the
+            short name (e.g., "beauty.R" to "R") before role matching
 
     Returns:
-        RGB data as NumPy array (H, W, 3)
+        (H, W, 3) float32 RGB array
 
     Raises:
-        ValueError: If channels list is empty or any channel is not 2D
+        ValueError: If channels list is empty or data is not 2D
     """
     if not channels:
         msg = "No channels provided"
         raise ValueError(msg)
 
-    # Step 1: Validate all channels are 2D.
-    normalized: list[tuple[str, np.ndarray]] = []
+    normalized: list[_NormalizedChannel] = []
     for ch in channels:
-        short_name = parse_channel_name(ch.name).channel_name if strip_layer_prefix else ch.name
-        normalized.append((short_name, _ensure_2d(ch.pixels)))
+        if strip_layer_prefix:
+            display_name = parse_channel_name(ch.info.name).channel_name
+        else:
+            display_name = ch.info.name
+        normalized.append(_NormalizedChannel(name=display_name, pixels=_ensure_2d(ch.pixels)))
 
-    # Step 2: Try role-based assembly (red, green, blue).
+    # Role-based assembly
     by_role: dict[str, np.ndarray] = {}
-    for name, pixels in normalized:
-        role = _normalize_channel_role(name)
+    for entry in normalized:
+        role = normalize_channel_role(entry.name)
         if role and role not in by_role:
-            by_role[role] = pixels
+            by_role[role] = entry.pixels
 
     if all(role in by_role for role in ("red", "green", "blue")):
         return np.stack([by_role["red"], by_role["green"], by_role["blue"]], axis=-1)
 
-    # Step 2b: Luminance-only — Nuke maps Y/y to all three RGB channels (grayscale).
+    # Luminance as grayscale
     if "luminance" in by_role:
         lum = by_role["luminance"]
         return np.stack([lum, lum, lum], axis=-1)
 
-    # Step 3: Positional fallback for non-standard channel names (H/S/V, Y/Pb/Pr, etc.).
-    return _positional_stack_rgb([pixels for _, pixels in normalized])
+    # Positional fallback
+    return _positional_stack_rgb([entry.pixels for entry in normalized])
 
 
-def extract_rgb_from_exr_part(part: EXRPart) -> np.ndarray:
-    """Extract RGB data from an EXR part's top-level rgba channels.
-
-    Matches Nuke's behavior: finds bare R, G, B channels (no layer prefix)
-    directly in the part's channel list. Falls back to the first layer if
-    no top-level rgba channels exist.
-
-    Args:
-        part: EXRPart containing channel and layer data
-
-    Returns:
-        RGB data as NumPy array (H, W, 3)
-
-    Raises:
-        ValueError: If no channels are available
-    """
-    if not part.channels:
-        msg = "EXR part has no channels"
-        raise ValueError(msg)
-
-    # Find top-level rgba channels (no layer prefix) by semantic role
-    rgba_channels: list[EXRChannel] = []
-    for ch in part.channels:
-        parsed = parse_channel_name(ch.name)
-        if parsed.layer_name != "":
-            continue
-        role = _normalize_channel_role(parsed.channel_name)
-        if role in ("red", "green", "blue", "alpha"):
-            rgba_channels.append(ch)
-
-    if rgba_channels:
-        return _channels_to_rgb(rgba_channels, strip_layer_prefix=True)
-
-    # No top-level rgba — fall back to first layer
-    if not part.layers:
-        msg = "EXR part has no layers"
-        raise ValueError(msg)
-    return extract_rgb_from_layer(part.layers[0])
+# --- Preview Generation ---
 
 
-def extract_rgb_from_layer(layer: EXRLayer) -> np.ndarray:
-    """Extract RGB data from an EXR layer.
-
-    Args:
-        layer: EXRLayer containing channel data
-
-    Returns:
-        RGB data as NumPy array (H, W, 3)
-
-    Raises:
-        ValueError: If layer has no channels
-    """
-    if not layer.channels:
-        msg = f"Layer '{layer.name}' has no channels"
-        raise ValueError(msg)
-    return _channels_to_rgb(layer.channels, strip_layer_prefix=True)
-
-
-def generate_exr_preview(  # noqa: PLR0913
-    exr_data: EXRData,
+def generate_preview(  # noqa: PLR0913
+    channels: list[EXRChannelPixelData],
     max_width: int = 1024,
     max_height: int = 1024,
-    tone_mapping_method: Literal["simple", "reinhard", "filmic"] = "simple",
+    tone_mapping_method: ToneMappingMethod = ToneMappingMethod.SIMPLE,
     exposure: float = 0.0,
     gamma: float = 2.2,
-    part_index: int = 0,
 ) -> Image.Image:
-    """Generate a tone-mapped preview image from EXR data.
+    """Generate a tone-mapped preview image from loaded channel data.
+
+    Extracts RGB, applies tone mapping, converts to 8-bit sRGB, and
+    thumbnails to the max dimensions.
 
     Args:
-        exr_data: EXRData containing the loaded EXR file
-        max_width: Maximum width for the preview
-        max_height: Maximum height for the preview
-        tone_mapping_method: Tone mapping algorithm
+        channels: Loaded channel pixel data
+        max_width: Maximum preview width (aspect ratio preserved)
+        max_height: Maximum preview height (aspect ratio preserved)
+        tone_mapping_method: Algorithm for HDR to LDR conversion
         exposure: Exposure adjustment in stops
         gamma: Gamma correction value
-        part_index: Which part to preview
 
     Returns:
         PIL Image with tone-mapped sRGB preview
-
-    Raises:
-        ValueError: If part_index is out of range
     """
-    if part_index >= len(exr_data.parts):
-        msg = f"Part index {part_index} out of range (EXR has {len(exr_data.parts)} parts)"
-        raise ValueError(msg)
-
-    part = exr_data.parts[part_index]
-    rgb = extract_rgb_from_exr_part(part)
-    rgb_ldr = tone_map(rgb, tone_mapping_method, exposure, gamma)
-    rgb_8bit = np.clip(rgb_ldr * 255.0, 0, 255).astype(np.uint8)
-
-    pil_image = Image.fromarray(rgb_8bit, mode="RGB")
-    pil_image.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
-    return pil_image
-
-
-def generate_layer_preview(  # noqa: PLR0913
-    layer: EXRLayer,
-    max_width: int = 512,
-    max_height: int = 512,
-    tone_mapping_method: Literal["simple", "reinhard", "filmic"] = "simple",
-    exposure: float = 0.0,
-    gamma: float = 2.2,
-) -> Image.Image:
-    """Generate a tone-mapped preview for a single EXR layer.
-
-    Args:
-        layer: EXRLayer to preview
-        max_width: Maximum width for the preview
-        max_height: Maximum height for the preview
-        tone_mapping_method: Tone mapping algorithm
-        exposure: Exposure adjustment in stops
-        gamma: Gamma correction value
-
-    Returns:
-        PIL Image with tone-mapped sRGB preview of the layer
-    """
-    rgb = extract_rgb_from_layer(layer)
+    rgb = extract_rgb_from_channels(channels)
     rgb_ldr = tone_map(rgb, tone_mapping_method, exposure, gamma)
     rgb_8bit = np.clip(rgb_ldr * 255.0, 0, 255).astype(np.uint8)
 

@@ -43,6 +43,17 @@
         "icon": "file-image",
         "group": "load"
       }
+    },
+    {
+      "class_name": "DisplayEXRPart",
+      "file_path": "griptape_nodes_opencolorio/exr/display_exr_part.py",
+      "metadata": {
+        "category": "exr",
+        "description": "Display a tone-mapped composite preview of a single EXR part",
+        "display_name": "Display EXR Part",
+        "icon": "eye",
+        "group": "display"
+      }
     }
   ],
   "workflows": []

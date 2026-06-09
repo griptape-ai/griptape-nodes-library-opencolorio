@@ -167,7 +167,9 @@ class LoadOCIOConfig(SuccessFailureNode):
             config = _load_ocio_config(file_path)
             colorspace_names, display_names, role_names = _extract_lists(config)
         except Exception as e:
-            logger.warning("LoadOCIOConfig '%s': could not load config from '%s': %s", self.name, file_path or "$OCIO", e)
+            logger.warning(
+                "LoadOCIOConfig '%s': could not load config from '%s': %s", self.name, file_path or "$OCIO", e
+            )
             colorspace_names, display_names, role_names = [], [], []
 
         self.parameter_output_values[self._colorspace_names_param.name] = colorspace_names

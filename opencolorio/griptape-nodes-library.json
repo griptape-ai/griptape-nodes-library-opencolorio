@@ -43,42 +43,5 @@
             }
         }
     ],
-    "nodes": [
-        {
-            "class_name": "LoadOCIOConfig",
-            "file_path": "nodes/config/load_ocio_config.py",
-            "metadata": {
-                "category": "opencolor",
-                "description": "Load and validate OCIO configuration files",
-                "display_name": "Load OCIO Config"
-            }
-        },
-        {
-            "class_name": "ColorSpaceTransform",
-            "file_path": "nodes/transform/colorspace_transform.py",
-            "metadata": {
-                "category": "opencolor",
-                "description": "Convert images between color spaces",
-                "display_name": "Color Space Transform"
-            }
-        },
-        {
-            "class_name": "ColorSpaceAnalysis",
-            "file_path": "nodes/analysis/colorspace_analysis.py",
-            "metadata": {
-                "category": "opencolor",
-                "description": "Analyze image color properties and statistics",
-                "display_name": "Color Space Analysis"
-            }
-        },
-        {
-            "class_name": "EXRLoader",
-            "file_path": "nodes/io/exr_loader.py",
-            "metadata": {
-                "category": "opencolor",
-                "description": "Load OpenEXR files for HDR color workflows",
-                "display_name": "EXR Loader"
-            }
-        }
-    ]
+    "nodes": []
 }

@@ -43,5 +43,15 @@
             }
         }
     ],
-    "nodes": []
+    "nodes": [
+        {
+            "class_name": "LoadOCIOConfig",
+            "file_path": "nodes/config/load_ocio_config.py",
+            "metadata": {
+                "category": "opencolor",
+                "description": "Load an OpenColorIO config from file or $OCIO environment variable",
+                "display_name": "Load OCIO Config"
+            }
+        }
+    ]
 }

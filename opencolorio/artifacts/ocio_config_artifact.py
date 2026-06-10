@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import dataclasses
+import json
 from dataclasses import dataclass, field
 
 
@@ -20,4 +22,6 @@ class OCIOConfigArtifact:
         ctx = f" ctx={self.context_vars}" if self.context_vars else ""
         return f"OCIOConfigArtifact({src}{ctx})"
 
-    __str__ = to_text
+    def __str__(self) -> str:
+        # Return JSON so that the standard ToJson node can deserialize this artifact.
+        return json.dumps(dataclasses.asdict(self))

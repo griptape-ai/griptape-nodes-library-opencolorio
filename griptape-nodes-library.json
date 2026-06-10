@@ -34,9 +34,9 @@
     },
     "categories": [
         {
-            "opencolor": {
+            "colorspace": {
                 "color": "border-blue-500",
-                "title": "OpenColor",
+                "title": "Colorspace",
                 "description": "Professional color management tools using OpenColorIO",
                 "icon": "Palette"
             }
@@ -47,7 +47,7 @@
             "class_name": "LoadOCIOConfig",
             "file_path": "opencolorio/nodes/config/load_ocio_config.py",
             "metadata": {
-                "category": "opencolor",
+                "category": "colorspace",
                 "description": "Load an OpenColorIO config from file or $OCIO environment variable",
                 "display_name": "Load OCIO Config"
             }

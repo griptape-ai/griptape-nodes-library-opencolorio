@@ -30,13 +30,30 @@ class TestOCIOConfigArtifactToText:
 
 
 class TestOCIOConfigArtifactStr:
-    def test_str_matches_to_text(self) -> None:
-        artifact = OCIOConfigArtifact(file_path="/cfg.ocio")
-        assert str(artifact) == artifact.to_text()
+    def test_str_is_valid_json(self) -> None:
+        import json
 
-    def test_str_empty_path_matches_to_text(self) -> None:
+        artifact = OCIOConfigArtifact(file_path="/cfg.ocio")
+        parsed = json.loads(str(artifact))
+        assert parsed == {"file_path": "/cfg.ocio", "context_vars": {}}
+
+    def test_str_empty_path_is_valid_json(self) -> None:
+        import json
+
         artifact = OCIOConfigArtifact(file_path="")
-        assert str(artifact) == artifact.to_text()
+        parsed = json.loads(str(artifact))
+        assert parsed == {"file_path": "", "context_vars": {}}
+
+    def test_str_with_context_vars_is_valid_json(self) -> None:
+        import json
+
+        artifact = OCIOConfigArtifact(file_path="/cfg.ocio", context_vars={"SHOT": "sh010"})
+        parsed = json.loads(str(artifact))
+        assert parsed == {"file_path": "/cfg.ocio", "context_vars": {"SHOT": "sh010"}}
+
+    def test_to_text_still_human_readable(self) -> None:
+        artifact = OCIOConfigArtifact(file_path="/cfg.ocio")
+        assert artifact.to_text() == "OCIOConfigArtifact(/cfg.ocio)"
 
 
 class TestOCIOConfigArtifactDefaults:

@@ -112,7 +112,15 @@ class LoadOCIOConfig(SuccessFailureNode):
     def after_value_set(self, parameter: Parameter, value: Any) -> None:
         if parameter is self._file_path_param:
             raw = str(value) if value else ""
-            resolved = self._resolve_path(raw)
+            try:
+                resolved = self._resolve_path(raw)
+            except FileLoadError as e:
+                logger.warning("LoadOCIOConfig '%s': could not resolve path '%s': %s", self.name, raw, e)
+                self.metadata["_file_path"] = ""
+                self.parameter_output_values[self._colorspace_names_param.name] = []
+                self.parameter_output_values[self._display_names_param.name] = []
+                self.parameter_output_values[self._role_names_param.name] = []
+                return super().after_value_set(parameter, value)
             self.metadata["_file_path"] = resolved
             self._refresh_lists(resolved)
         return super().after_value_set(parameter, value)
@@ -156,10 +164,7 @@ class LoadOCIOConfig(SuccessFailureNode):
     def _resolve_path(self, raw: str) -> str:
         if not raw:
             return ""
-        try:
-            return File(raw).resolve()
-        except FileLoadError:
-            return raw
+        return File(raw).resolve()
 
     def _refresh_lists(self, file_path: str) -> None:
         """Load config and populate list outputs. Clears lists silently on failure."""

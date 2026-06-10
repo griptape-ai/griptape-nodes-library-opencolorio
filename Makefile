@@ -95,6 +95,10 @@ fix: ## Fix project.
 	@make format
 	@uv run ruff check --fix --unsafe-fixes
 
+.PHONY: test
+test: ## Run tests.
+	@uv run pytest
+
 .PHONY: check
 check: check/format check/lint check/types ## Run all checks.
 

@@ -8,7 +8,8 @@ from griptape_nodes.files.file import FileLoadError
 from griptape_nodes.retained_mode.events.os_events import FileIOFailureReason
 
 from opencolorio.artifacts.ocio_config_artifact import OCIOConfigArtifact
-from opencolorio.nodes.config.load_ocio_config import LoadOCIOConfig, _extract_lists, _load_ocio_config
+from opencolorio.nodes.config.load_ocio_config import LoadOCIOConfig
+from opencolorio.ocio_helpers import extract_lists, load_ocio_config
 
 # ---------------------------------------------------------------------------
 # Module-level helper tests — no node instantiation needed
@@ -18,17 +19,17 @@ from opencolorio.nodes.config.load_ocio_config import LoadOCIOConfig, _extract_l
 class TestLoadOCIOConfigHelper:
     def test_empty_path_calls_create_from_env(self) -> None:
         mock_config = MagicMock()
-        with patch("opencolorio.nodes.config.load_ocio_config.ocio") as mock_ocio:
+        with patch("opencolorio.ocio_helpers.ocio") as mock_ocio:
             mock_ocio.Config.CreateFromEnv.return_value = mock_config
-            result = _load_ocio_config("")
+            result = load_ocio_config("")
         mock_ocio.Config.CreateFromEnv.assert_called_once()
         assert result is mock_config
 
     def test_non_empty_path_calls_create_from_file(self) -> None:
         mock_config = MagicMock()
-        with patch("opencolorio.nodes.config.load_ocio_config.ocio") as mock_ocio:
+        with patch("opencolorio.ocio_helpers.ocio") as mock_ocio:
             mock_ocio.Config.CreateFromFile.return_value = mock_config
-            result = _load_ocio_config("/some/config.ocio")
+            result = load_ocio_config("/some/config.ocio")
         mock_ocio.Config.CreateFromFile.assert_called_once_with("/some/config.ocio")
         assert result is mock_config
 
@@ -38,7 +39,7 @@ class TestExtractLists:
         # CreateRaw() gives a minimal valid config with no colorspaces/displays/roles —
         # enough to verify the return types without a real .ocio file on disk.
         config = ocio.Config.CreateRaw()
-        colorspaces, displays, roles = _extract_lists(config)
+        colorspaces, displays, roles = extract_lists(config)
         assert isinstance(colorspaces, list)
         assert isinstance(displays, list)
         assert isinstance(roles, list)
@@ -105,7 +106,7 @@ class TestAfterValueSet:
 
         with (
             patch("opencolorio.nodes.config.load_ocio_config.File") as mock_file_cls,
-            patch("opencolorio.nodes.config.load_ocio_config._load_ocio_config", return_value=raw_config),
+            patch("opencolorio.nodes.config.load_ocio_config.load_ocio_config", return_value=raw_config),
         ):
             mock_file_cls.return_value.resolve.return_value = "/abs/config.ocio"
             node.after_value_set(node._file_path_param, "/abs/config.ocio")
@@ -128,6 +129,17 @@ class TestAfterValueSet:
         assert node.parameter_output_values["colorspace_names"] == []
         assert node.parameter_output_values["display_names"] == []
         assert node.parameter_output_values["role_names"] == []
+
+    def test_file_load_error_clears_config_param(self) -> None:
+        node = _make_node()
+        # Seed a prior successful artifact so we can verify it's cleared.
+        node.parameter_output_values["config"] = OCIOConfigArtifact(file_path="/old/config.ocio")
+
+        with patch("opencolorio.nodes.config.load_ocio_config.File") as mock_file_cls:
+            mock_file_cls.return_value.resolve.side_effect = _make_file_load_error()
+            node.after_value_set(node._file_path_param, "{BAD_VAR}/config.ocio")
+
+        assert node.parameter_output_values.get("config") is None
 
     def test_file_load_error_stores_empty_metadata_path(self) -> None:
         node = _make_node()
@@ -158,7 +170,7 @@ class TestAprocess:
 
         with (
             patch("opencolorio.nodes.config.load_ocio_config.File") as mock_file_cls,
-            patch("opencolorio.nodes.config.load_ocio_config._load_ocio_config", return_value=raw_config),
+            patch("opencolorio.nodes.config.load_ocio_config.load_ocio_config", return_value=raw_config),
         ):
             mock_file_cls.return_value.resolve.return_value = "/abs/config.ocio"
             node.set_parameter_value("file_path", "/abs/config.ocio")
@@ -174,7 +186,7 @@ class TestAprocess:
 
         with (
             patch("opencolorio.nodes.config.load_ocio_config.File") as mock_file_cls,
-            patch("opencolorio.nodes.config.load_ocio_config._load_ocio_config", return_value=raw_config),
+            patch("opencolorio.nodes.config.load_ocio_config.load_ocio_config", return_value=raw_config),
         ):
             mock_file_cls.return_value.resolve.return_value = "/abs/config.ocio"
             node.set_parameter_value("file_path", "/abs/config.ocio")
@@ -186,7 +198,7 @@ class TestAprocess:
         node = _make_node()
 
         with (
-            patch("opencolorio.nodes.config.load_ocio_config._load_ocio_config") as mock_load,
+            patch("opencolorio.nodes.config.load_ocio_config.load_ocio_config") as mock_load,
         ):
             mock_load.side_effect = Exception("bad config")
             with pytest.raises(Exception, match="bad config"):
@@ -197,7 +209,7 @@ class TestAprocess:
     async def test_failure_includes_error_in_result_details(self) -> None:
         node = _make_node()
 
-        with patch("opencolorio.nodes.config.load_ocio_config._load_ocio_config") as mock_load:
+        with patch("opencolorio.nodes.config.load_ocio_config.load_ocio_config") as mock_load:
             mock_load.side_effect = RuntimeError("config file not found")
             with pytest.raises(RuntimeError):
                 await node.aprocess()

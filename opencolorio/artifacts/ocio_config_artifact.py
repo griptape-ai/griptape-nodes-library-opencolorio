@@ -19,3 +19,5 @@ class OCIOConfigArtifact:
         src = self.file_path or "$OCIO"
         ctx = f" ctx={self.context_vars}" if self.context_vars else ""
         return f"OCIOConfigArtifact({src}{ctx})"
+
+    __str__ = to_text

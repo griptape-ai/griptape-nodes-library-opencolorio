@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import PyOpenColorIO as ocio
 from griptape_nodes.exe_types.core_types import Parameter, ParameterMode
 from griptape_nodes.exe_types.node_types import SuccessFailureNode
 from griptape_nodes.exe_types.param_types.parameter_string import ParameterString
@@ -11,6 +10,7 @@ from griptape_nodes.files.file import File, FileLoadError
 from griptape_nodes.traits.file_system_picker import FileSystemPicker
 
 from opencolorio.artifacts.ocio_config_artifact import OCIOConfigArtifact
+from opencolorio.ocio_helpers import extract_lists, load_ocio_config
 
 logger = logging.getLogger("griptape_nodes")
 
@@ -117,9 +117,8 @@ class LoadOCIOConfig(SuccessFailureNode):
             except FileLoadError as e:
                 logger.warning("LoadOCIOConfig '%s': could not resolve path '%s': %s", self.name, raw, e)
                 self.metadata["_file_path"] = ""
-                self.parameter_output_values[self._colorspace_names_param.name] = []
-                self.parameter_output_values[self._display_names_param.name] = []
-                self.parameter_output_values[self._role_names_param.name] = []
+                self.parameter_output_values[self._config_param.name] = None
+                self._set_list_outputs([], [], [])
                 return super().after_value_set(parameter, value)
             self.metadata["_file_path"] = resolved
             self._refresh_lists(resolved)
@@ -133,16 +132,14 @@ class LoadOCIOConfig(SuccessFailureNode):
             file_path = self._resolve_path(raw)
             context_vars = self.get_parameter_value(self._context_vars_param.name) or {}
 
-            config = _load_ocio_config(file_path)
-            colorspace_names, display_names, role_names = _extract_lists(config)
+            config = load_ocio_config(file_path)
+            colorspace_names, display_names, role_names = extract_lists(config)
 
             self.parameter_output_values[self._config_param.name] = OCIOConfigArtifact(
                 file_path=file_path,
                 context_vars=dict(context_vars),
             )
-            self.parameter_output_values[self._colorspace_names_param.name] = colorspace_names
-            self.parameter_output_values[self._display_names_param.name] = display_names
-            self.parameter_output_values[self._role_names_param.name] = role_names
+            self._set_list_outputs(colorspace_names, display_names, role_names)
 
             src = file_path or "$OCIO"
             self._set_status_results(
@@ -169,27 +166,22 @@ class LoadOCIOConfig(SuccessFailureNode):
     def _refresh_lists(self, file_path: str) -> None:
         """Load config and populate list outputs. Clears lists silently on failure."""
         try:
-            config = _load_ocio_config(file_path)
-            colorspace_names, display_names, role_names = _extract_lists(config)
+            config = load_ocio_config(file_path)
+            colorspace_names, display_names, role_names = extract_lists(config)
         except Exception as e:
             logger.warning(
                 "LoadOCIOConfig '%s': could not load config from '%s': %s", self.name, file_path or "$OCIO", e
             )
             colorspace_names, display_names, role_names = [], [], []
 
+        self._set_list_outputs(colorspace_names, display_names, role_names)
+
+    def _set_list_outputs(
+        self,
+        colorspace_names: list[str],
+        display_names: list[str],
+        role_names: list[str],
+    ) -> None:
         self.parameter_output_values[self._colorspace_names_param.name] = colorspace_names
         self.parameter_output_values[self._display_names_param.name] = display_names
         self.parameter_output_values[self._role_names_param.name] = role_names
-
-
-def _load_ocio_config(file_path: str) -> ocio.Config:
-    if file_path:
-        return ocio.Config.CreateFromFile(file_path)
-    return ocio.Config.CreateFromEnv()
-
-
-def _extract_lists(config: ocio.Config) -> tuple[list[str], list[str], list[str]]:
-    colorspace_names = list(config.getColorSpaceNames())
-    display_names = list(config.getDisplays())
-    role_names = [role for role, _ in config.getRoles()]
-    return colorspace_names, display_names, role_names

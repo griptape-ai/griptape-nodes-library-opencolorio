@@ -26,10 +26,9 @@
         ],
         "dependencies": {
             "pip_dependencies": [
-                "opencolorio>=2.3.0",
+                "opencolorio>=2.5.2",
                 "Pillow>=10.0.0",
-                "numpy>=1.24.0",
-                "imageio[pyexr]>=2.31.0"
+                "numpy>=1.24.0"
             ]
         }
     },

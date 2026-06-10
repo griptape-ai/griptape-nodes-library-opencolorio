@@ -29,6 +29,16 @@ class TestOCIOConfigArtifactToText:
         assert "SEQ" in result
 
 
+class TestOCIOConfigArtifactStr:
+    def test_str_matches_to_text(self) -> None:
+        artifact = OCIOConfigArtifact(file_path="/cfg.ocio")
+        assert str(artifact) == artifact.to_text()
+
+    def test_str_empty_path_matches_to_text(self) -> None:
+        artifact = OCIOConfigArtifact(file_path="")
+        assert str(artifact) == artifact.to_text()
+
+
 class TestOCIOConfigArtifactDefaults:
     def test_default_context_vars_is_empty_dict(self) -> None:
         artifact = OCIOConfigArtifact(file_path="/cfg.ocio")

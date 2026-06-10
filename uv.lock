@@ -230,15 +230,6 @@ wheels = [
 ]
 
 [[package]]
-name = "fileseq"
-version = "3.2.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/69/6b/193ce3cf5d097b03be9b4965ecd952b60e183758a41f44f9d44530b54dc6/fileseq-3.2.0.tar.gz", hash = "sha256:afe858d6d312ff3e4df147c0fc16cfca7c412b37d1be0624f87285accd368dca", size = 2167970, upload-time = "2026-04-19T04:05:16.436Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/25/d9/af7357aabd5b69bf3696567c5d08a1aa6ac08ba2662a94181d75cec919ec/fileseq-3.2.0-py3-none-any.whl", hash = "sha256:8ae0dc525742b3f86d4261fa2e03b2ed1622f93a72c87db5cb788f9f0ee8d1d1", size = 202127, upload-time = "2026-04-19T04:05:14.589Z" },
-]
-
-[[package]]
 name = "filetype"
 version = "1.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -288,14 +279,13 @@ wheels = [
 [[package]]
 name = "griptape-nodes-engine"
 version = "0.85.3"
-source = { git = "https://github.com/griptape-ai/griptape-nodes?rev=2151da59f7259a8797332387ed8b594c77440f20#2151da59f7259a8797332387ed8b594c77440f20" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
     { name = "asyncio-thread-runner" },
     { name = "binaryornot" },
     { name = "cattrs" },
     { name = "fastapi" },
-    { name = "fileseq" },
     { name = "griptape" },
     { name = "httpx" },
     { name = "huggingface-hub" },
@@ -323,6 +313,10 @@ dependencies = [
     { name = "websockets" },
     { name = "xdg-base-dirs" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/a6/02/e8507880c0a1b4fbd1bcc6338032a7d3bf9c28454a08fd2f7b2eefc5435b/griptape_nodes_engine-0.85.3.tar.gz", hash = "sha256:b252f7229fc02d46b36d5f82685ba1225088a99b2969c877c09b4287a5ae1646", size = 790117, upload-time = "2026-05-28T19:12:03.889Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/48/1a/1f6ac59185aaf284b4613a2b6507f71a7482c0191d3fc9fcf55ea5eab0a7/griptape_nodes_engine-0.85.3-py3-none-any.whl", hash = "sha256:9bd8d10becdea99004f1db4f804238c7d987cd66620393202ca269b61320047c", size = 1004446, upload-time = "2026-05-28T19:12:05.191Z" },
+]
 
 [[package]]
 name = "griptape-nodes-library-opencolorio"
@@ -345,9 +339,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "griptape-nodes-engine", git = "https://github.com/griptape-ai/griptape-nodes?rev=2151da59f7259a8797332387ed8b594c77440f20" },
+    { name = "griptape-nodes-engine", specifier = ">=0.82.0" },
     { name = "numpy", specifier = ">=1.24.0" },
-    { name = "opencolorio", specifier = ">=2.3.0" },
+    { name = "opencolorio", specifier = ">=2.5.2" },
     { name = "pillow", specifier = ">=10.0.0" },
 ]
 
@@ -785,16 +779,16 @@ wheels = [
 
 [[package]]
 name = "opencolorio"
-version = "2.5.1"
+version = "2.5.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/b8/25/15eece486a3911fb0d68126c523b52a3970f382fbe57cb224a107ff56710/opencolorio-2.5.1.tar.gz", hash = "sha256:5d9a63ffa92e3442dea811d3d0aa445c4cdf70a8e4d038057d53f7576c235c97", size = 13941789, upload-time = "2026-01-13T06:06:00.638Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6a/ea/9d930df6740f9b09b0b342f40a5ef165da5050141e496081ef80b302e566/opencolorio-2.5.2.tar.gz", hash = "sha256:fecebd0914089b0c8238c55648f8eb2ccd2702ab4b2eea53856a0e368ded8262", size = 13946157, upload-time = "2026-05-13T18:49:47.351Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/cb/86/9b361fb6076994706e9a1ec69bb2cb938c8d09bf74f75d63c21e6a14d4bc/opencolorio-2.5.1-cp312-cp312-macosx_10_15_x86_64.whl", hash = "sha256:522a5db1d7169a66593118303cf9e0cff1813e9acce82687e885ad86b14401e1", size = 6389888, upload-time = "2026-01-13T06:05:27.122Z" },
-    { url = "https://files.pythonhosted.org/packages/58/bc/aff04ae20d04b2521da54b182958129cd8de831a0c7d295d7867ed9e5652/opencolorio-2.5.1-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:19b212e7adc2bd0605794cc3be11d8bd7c5169d48719b0178643c2739818336f", size = 5757694, upload-time = "2026-01-13T06:05:28.99Z" },
-    { url = "https://files.pythonhosted.org/packages/06/28/15aa3d255e955adb1bd3cd6e32f9ff7d3a09ccb57e88b8d081461cc68bae/opencolorio-2.5.1-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:ddad4cf1246fb9924de4125c47a6c5d48b30f24c58b6eba2e63a80c1fc2b1494", size = 6292120, upload-time = "2026-01-13T06:05:30.75Z" },
-    { url = "https://files.pythonhosted.org/packages/cb/44/7c0a925ddbf392b8fc618301d0cdf2e35085cf8fbb8f7978bcbee36ad551/opencolorio-2.5.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:b5bf4cd26fa1751db43f1e437aa6637591247df357109d15b030d4525b76f003", size = 6868450, upload-time = "2026-01-13T06:05:32.151Z" },
-    { url = "https://files.pythonhosted.org/packages/b4/18/bea3ee9c76c01729870d9cbe7c9255ee2479e61302c85afce8709e4d2886/opencolorio-2.5.1-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:0e48a14c463b20a5775176f1ba99dd785a30c248a99256bb6be3ea971d3daa90", size = 6967754, upload-time = "2026-01-13T06:05:33.372Z" },
-    { url = "https://files.pythonhosted.org/packages/b8/14/5c06c929bfc4022ec3de9897f0a130b72f8737c6aa00263bc0319539fd6b/opencolorio-2.5.1-cp312-cp312-win_amd64.whl", hash = "sha256:7339162030b4eed31d4d496e3f005cc81da89dada81579ade91a156393cf9410", size = 3905596, upload-time = "2026-01-13T06:05:34.581Z" },
+    { url = "https://files.pythonhosted.org/packages/82/70/ee3ada349863f668cbd4897f01d8dd6305407572111c5355f28dc5b5001a/opencolorio-2.5.2-cp312-cp312-macosx_10_15_x86_64.whl", hash = "sha256:72c5ff68430f11d1cef8fb792d1167cb840ccd6da2aade6bbe6c3c9d7088eb56", size = 6358645, upload-time = "2026-05-13T18:49:10.037Z" },
+    { url = "https://files.pythonhosted.org/packages/cd/a0/d427d4e921389a1b119b22fc9296313f9006af789e8e29531f52132bdfcc/opencolorio-2.5.2-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:53f8098188a8fe434c4831138e818e6b53ae00599b8a537ef4eb1f3288af276b", size = 5720088, upload-time = "2026-05-13T18:49:11.418Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/68/6b9b5d4bd54de8933cfcf9b1854967da0740d7b493783f9f9f7f41f43d6e/opencolorio-2.5.2-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:b84e0653e59686ccbdbec1b4b857946f2f126f3bccbb25921649beefdb4bd763", size = 6251103, upload-time = "2026-05-13T18:49:13.088Z" },
+    { url = "https://files.pythonhosted.org/packages/63/a5/ea77ac1f8ba17503b113b4334d3b1f10cba32104d0f741d6694e8ee2564a/opencolorio-2.5.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:cc34db609bd91fb43747d2f425d020d6d17afed406669703bab2af08c149ddac", size = 6828941, upload-time = "2026-05-13T18:49:14.594Z" },
+    { url = "https://files.pythonhosted.org/packages/c2/57/29ffadf7bf9c6a65a884be18933864a1a3e6ff165127bf1acff9930b97ee/opencolorio-2.5.2-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:3d0ab1c398d560513c651c7b9c676e68f264a63b97e29fec21722d4270f865aa", size = 6932093, upload-time = "2026-05-13T18:49:16.252Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/1d/1f1f5ce05a55168d0528ed0fdc89dd60a82664fff0cbc4061a05689406cf/opencolorio-2.5.2-cp312-cp312-win_amd64.whl", hash = "sha256:96b0b01713d759c2ddc0f57229a1bb599d72298746cdeff9512abc46a079494f", size = 3865142, upload-time = "2026-05-13T18:49:17.57Z" },
 ]
 
 [[package]]

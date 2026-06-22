@@ -14,7 +14,7 @@
         "author": "OpenColorIO Node Library",
         "description": "Professional color management and transformation tools using OpenColorIO",
         "library_version": "1.0.0",
-        "engine_version": "0.37.0",
+        "engine_version": "0.85.0",
         "tags": [
             "OpenColorIO",
             "OCIO",
@@ -26,22 +26,31 @@
         ],
         "dependencies": {
             "pip_dependencies": [
-                "opencolorio>=2.3.0",
+                "opencolorio>=2.5.2",
                 "Pillow>=10.0.0",
-                "numpy>=1.24.0",
-                "imageio[pyexr]>=2.31.0"
+                "numpy>=1.24.0"
             ]
         }
     },
     "categories": [
         {
-            "opencolor": {
+            "colorspace": {
                 "color": "border-blue-500",
-                "title": "OpenColor",
+                "title": "Colorspace",
                 "description": "Professional color management tools using OpenColorIO",
                 "icon": "Palette"
             }
         }
     ],
-    "nodes": []
+    "nodes": [
+        {
+            "class_name": "LoadOCIOConfig",
+            "file_path": "opencolorio/nodes/config/load_ocio_config.py",
+            "metadata": {
+                "category": "colorspace",
+                "description": "Load an OpenColorIO config from file or $OCIO environment variable",
+                "display_name": "Load OCIO Config"
+            }
+        }
+    ]
 }

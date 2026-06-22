@@ -8,16 +8,11 @@ authors = [
 readme = "README.md"
 requires-python = "~=3.12.0"
 dependencies = [
-    "griptape-nodes",
-    "opencolorio>=2.3.0",
+    "griptape-nodes-engine>=0.82.0",
+    "opencolorio>=2.5.2",
     "Pillow>=10.0.0",
     "numpy>=1.24.0",
-    "requests>=2.28.0",
-    "imageio[pyexr]>=2.31.0",
 ]
-
-[tool.uv.sources]
-griptape-nodes = { git = "https://github.com/griptape-ai/griptape-nodes", rev="latest"}
 
 
 [tool.hatch.build.targets.wheel]
@@ -29,6 +24,10 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = ["pyright>=1.1.396", "pytest-asyncio>=0.21.0", "ruff>=0.8.0", "pytest"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 120

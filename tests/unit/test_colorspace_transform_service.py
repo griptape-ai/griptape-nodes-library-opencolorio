@@ -6,7 +6,8 @@ import numpy as np
 
 from opencolorio.services.colorspace_transform import (
     ColorspaceTransformRequest,
-    ColorspaceTransformResult,
+    ColorspaceTransformResultFailure,
+    ColorspaceTransformResultSuccess,
     handle_colorspace_transform,
 )
 
@@ -16,23 +17,33 @@ def _pixels(h: int = 4, w: int = 4) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# ColorspaceTransformResult unit tests
+# ColorspaceTransformResultSuccess unit tests
 # ---------------------------------------------------------------------------
 
 
-class TestColorspaceTransformResult:
-    def test_succeeded_true_when_pixels_set(self) -> None:
-        arr = _pixels()
-        result = ColorspaceTransformResult(pixels=arr)
+class TestColorspaceTransformResultSuccess:
+    def test_succeeded_returns_true(self) -> None:
+        result = ColorspaceTransformResultSuccess(pixels=_pixels(), result_details="ok")
         assert result.succeeded() is True
 
-    def test_succeeded_false_when_pixels_none(self) -> None:
-        result = ColorspaceTransformResult(pixels=None)
+    def test_workflow_not_altered(self) -> None:
+        result = ColorspaceTransformResultSuccess(pixels=_pixels(), result_details="ok")
+        assert result.altered_workflow_state is False
+
+
+# ---------------------------------------------------------------------------
+# ColorspaceTransformResultFailure unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestColorspaceTransformResultFailure:
+    def test_succeeded_returns_false(self) -> None:
+        result = ColorspaceTransformResultFailure(result_details="something went wrong")
         assert result.succeeded() is False
 
-    def test_result_details_defaults_to_empty(self) -> None:
-        result = ColorspaceTransformResult(pixels=None)
-        assert result.result_details == ""
+    def test_workflow_not_altered(self) -> None:
+        result = ColorspaceTransformResultFailure(result_details="something went wrong")
+        assert result.altered_workflow_state is False
 
 
 # ---------------------------------------------------------------------------
@@ -44,7 +55,7 @@ def _make_request(**kwargs) -> ColorspaceTransformRequest:
     defaults = {
         "pixels": _pixels(),
         "source_colorspace": "scene_linear",
-        "config_path": "",
+        "config_path": None,
         "display": "sRGB",
         "view": "ACES",
     }
@@ -74,6 +85,7 @@ class TestHandleColorspaceTransform:
         with patch("opencolorio.services.colorspace_transform.load_ocio_config", return_value=config):
             result = handle_colorspace_transform(req)
 
+        assert isinstance(result, ColorspaceTransformResultSuccess)
         assert result.succeeded() is True
         assert result.pixels is not None
         assert result.pixels.shape == req.pixels.shape
@@ -108,6 +120,7 @@ class TestHandleColorspaceTransform:
             result = handle_colorspace_transform(req)
             mock_load.assert_not_called()
 
+        assert isinstance(result, ColorspaceTransformResultSuccess)
         assert result.succeeded() is True
         np.testing.assert_array_equal(result.pixels, original)
 
@@ -120,9 +133,10 @@ class TestHandleColorspaceTransform:
         ):
             result = handle_colorspace_transform(req)
 
+        assert isinstance(result, ColorspaceTransformResultFailure)
         assert result.succeeded() is False
-        assert result.pixels is None
         assert "config not found" in str(result.result_details)
+        assert "/nonexistent/config.ocio" in str(result.result_details)
 
     def test_returns_failure_on_processor_error(self) -> None:
         config = MagicMock()
@@ -132,6 +146,7 @@ class TestHandleColorspaceTransform:
         with patch("opencolorio.services.colorspace_transform.load_ocio_config", return_value=config):
             result = handle_colorspace_transform(req)
 
+        assert isinstance(result, ColorspaceTransformResultFailure)
         assert result.succeeded() is False
         assert "bad_cs" in str(result.result_details)
 
@@ -143,6 +158,7 @@ class TestHandleColorspaceTransform:
         with patch("opencolorio.services.colorspace_transform.load_ocio_config", return_value=config):
             result = handle_colorspace_transform(req)
 
+        assert isinstance(result, ColorspaceTransformResultSuccess)
         proc.applyRGB.assert_called_once()
         # The arg passed to applyRGB should be the output (not the original)
         called_arg = proc.applyRGB.call_args[0][0]
@@ -155,5 +171,6 @@ class TestHandleColorspaceTransform:
         with patch("opencolorio.services.colorspace_transform.load_ocio_config", return_value=config):
             result = handle_colorspace_transform(req)
 
+        assert isinstance(result, ColorspaceTransformResultSuccess)
         assert result.pixels is not None
         assert result.pixels.dtype == np.float32

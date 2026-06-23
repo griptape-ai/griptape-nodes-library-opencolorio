@@ -8,12 +8,12 @@ class TestOCIOConfigArtifactToText:
         artifact = OCIOConfigArtifact(file_path="/path/to/config.ocio")
         assert artifact.to_text() == "OCIOConfigArtifact(/path/to/config.ocio)"
 
-    def test_to_text_empty_path_uses_env_var(self) -> None:
-        artifact = OCIOConfigArtifact(file_path="")
+    def test_to_text_none_path_uses_env_var(self) -> None:
+        artifact = OCIOConfigArtifact(file_path=None)
         assert artifact.to_text() == "OCIOConfigArtifact($OCIO)"
 
     def test_to_text_with_context_vars(self) -> None:
-        artifact = OCIOConfigArtifact(file_path="", context_vars={"SHOT": "sh010"})
+        artifact = OCIOConfigArtifact(file_path=None, context_vars={"SHOT": "sh010"})
         result = artifact.to_text()
         assert "ctx=" in result
         assert "SHOT" in result
@@ -37,12 +37,12 @@ class TestOCIOConfigArtifactStr:
         parsed = json.loads(str(artifact))
         assert parsed == {"file_path": "/cfg.ocio", "context_vars": {}}
 
-    def test_str_empty_path_is_valid_json(self) -> None:
+    def test_str_none_path_is_valid_json(self) -> None:
         import json
 
-        artifact = OCIOConfigArtifact(file_path="")
+        artifact = OCIOConfigArtifact(file_path=None)
         parsed = json.loads(str(artifact))
-        assert parsed == {"file_path": "", "context_vars": {}}
+        assert parsed == {"file_path": None, "context_vars": {}}
 
     def test_str_with_context_vars_is_valid_json(self) -> None:
         import json

@@ -25,6 +25,14 @@ class TestLoadOCIOConfigHelper:
         mock_ocio.Config.CreateFromEnv.assert_called_once()
         assert result is mock_config
 
+    def test_none_path_calls_create_from_env(self) -> None:
+        mock_config = MagicMock()
+        with patch("opencolorio.ocio_helpers.ocio") as mock_ocio:
+            mock_ocio.Config.CreateFromEnv.return_value = mock_config
+            result = load_ocio_config(None)
+        mock_ocio.Config.CreateFromEnv.assert_called_once()
+        assert result is mock_config
+
     def test_non_empty_path_calls_create_from_file(self) -> None:
         mock_config = MagicMock()
         with patch("opencolorio.ocio_helpers.ocio") as mock_ocio:
@@ -62,9 +70,9 @@ def _make_file_load_error() -> FileLoadError:
 
 
 class TestResolvePath:
-    def test_empty_string_returns_empty(self) -> None:
+    def test_empty_string_returns_none(self) -> None:
         node = _make_node()
-        assert node._resolve_path("") == ""
+        assert node._resolve_path("") is None
 
     def test_valid_path_returns_resolved(self) -> None:
         node = _make_node()
@@ -147,7 +155,7 @@ class TestAfterValueSet:
             mock_file_cls.return_value.resolve.side_effect = _make_file_load_error()
             node.after_value_set(node._file_path_param, "{BAD}/config.ocio")
 
-        assert node.metadata.get("_file_path") == ""
+        assert node.metadata.get("_file_path") is None
 
     def test_file_load_error_logs_warning(self, caplog: pytest.LogCaptureFixture) -> None:
         import logging

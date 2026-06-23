@@ -11,14 +11,14 @@ class OCIOConfigArtifact:
 
     Flows between OCIO nodes. Downstream nodes call
     ``ocio.Config.CreateFromFile(artifact.file_path)`` (or ``CreateFromEnv()``
-    when ``file_path`` is empty) and build a context from ``context_vars``.
+    when ``file_path`` is None) and build a context from ``context_vars``.
 
     ``context_vars`` keys and values are always ``str`` — OCIO uses them as
     string substitutions in file path templates (e.g. ``{SHOT}``, ``{SEQ}``),
     equivalent to environment variables scoped to the config lookup.
     """
 
-    file_path: str  # absolute path, or "" to use $OCIO env var
+    file_path: str | None  # absolute path, or None to use $OCIO env var
     context_vars: dict[str, str] = field(default_factory=dict)
 
     def to_text(self) -> str:

@@ -103,7 +103,7 @@ class LoadOCIOConfig(SuccessFailureNode):
         )
 
         # Restore list outputs if saved with a valid path.
-        saved_path: str = self.metadata.get("_file_path", "")
+        saved_path: str | None = self.metadata.get("_file_path")
         if saved_path:
             self._refresh_lists(saved_path)
 
@@ -111,12 +111,12 @@ class LoadOCIOConfig(SuccessFailureNode):
 
     def after_value_set(self, parameter: Parameter, value: Any) -> None:
         if parameter is self._file_path_param:
-            raw = str(value) if value else ""
+            raw = str(value) if value else None
             try:
                 resolved = self._resolve_path(raw)
             except FileLoadError as e:
                 logger.warning("LoadOCIOConfig '%s': could not resolve path '%s': %s", self.name, raw, e)
-                self.metadata["_file_path"] = ""
+                self.metadata["_file_path"] = None
                 self.parameter_output_values[self._config_param.name] = None
                 self._set_list_outputs([], [], [])
                 return super().after_value_set(parameter, value)
@@ -128,7 +128,7 @@ class LoadOCIOConfig(SuccessFailureNode):
         self._clear_execution_status()
 
         try:
-            raw = self.get_parameter_value(self._file_path_param.name) or ""
+            raw = self.get_parameter_value(self._file_path_param.name) or None
             file_path = self._resolve_path(raw)
             context_vars = self.get_parameter_value(self._context_vars_param.name) or {}
 
@@ -158,12 +158,12 @@ class LoadOCIOConfig(SuccessFailureNode):
 
     # --- Private ---
 
-    def _resolve_path(self, raw: str) -> str:
+    def _resolve_path(self, raw: str | None) -> str | None:
         if not raw:
-            return ""  # "" is the sentinel for "load from $OCIO env var" in load_ocio_config
+            return None
         return File(raw).resolve()
 
-    def _refresh_lists(self, file_path: str) -> None:
+    def _refresh_lists(self, file_path: str | None) -> None:
         """Load config and populate list outputs. Clears lists silently on failure."""
         try:
             config = load_ocio_config(file_path)

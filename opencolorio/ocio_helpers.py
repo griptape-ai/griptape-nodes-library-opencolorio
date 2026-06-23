@@ -11,7 +11,7 @@ class OCIOLists(NamedTuple):
     role_names: list[str]
 
 
-def load_ocio_config(file_path: str) -> ocio.Config:
+def load_ocio_config(file_path: str | None) -> ocio.Config:
     """Load an OCIO config from a file path, or from the environment if no path is given."""
     if file_path:
         return ocio.Config.CreateFromFile(file_path)

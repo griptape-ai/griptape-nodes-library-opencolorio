@@ -1,6 +1,7 @@
 {
     "name": "OpenColorIO Library",
-    "library_schema_version": "0.1.0",
+    "library_schema_version": "0.10.0",
+    "advanced_library_path": "opencolorio/advanced_library.py",
     "settings": [
         {
             "description": "Environment variables for OpenColorIO configuration",

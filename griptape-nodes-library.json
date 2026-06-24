@@ -4,10 +4,12 @@
     "advanced_library_path": "opencolorio/advanced_library.py",
     "settings": [
         {
-            "description": "Environment variables for OpenColorIO configuration",
-            "category": "opencolor",
+            "description": "Path to the OpenColorIO config file. Set OCIO to your studio or project config path (e.g. /path/to/config.ocio). This is the standard $OCIO environment variable recognised by all OCIO-aware applications.",
+            "category": "app_events.on_app_initialization_complete",
             "contents": {
-                "OCIO": "$OCIO"
+                "secrets_to_register": {
+                    "OCIO": ""
+                }
             }
         }
     ],

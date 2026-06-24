@@ -1,191 +1,108 @@
 # OpenColorIO Library for Griptape Nodes
 
-Professional color management tools for film, VFX, and animation using OpenColorIO (OCIO).
+Professional color management nodes for Griptape Nodes, built on [OpenColorIO](https://opencolorio.org/) (OCIO) — the industry-standard color management system used across film, VFX, and animation pipelines.
 
-## Overview
+---
 
-This library provides a comprehensive set of Griptape Nodes for working with OpenColorIO, the industry-standard color management system. It enables visual node-based workflows for color space conversions, look development, display transforms, and advanced color analysis.
+## For Artists
 
-## Features
+### Prerequisites
 
-### Core Capabilities
-- **OCIO Configuration Management**: Load and analyze OCIO config files
-- **Color Space Transforms**: Convert images between different color spaces
-- **Look Development**: Apply artistic looks and creative color transforms
-- **Display Transforms**: Prepare images for specific display devices
-- **Color Analysis**: Analyze gamut coverage and color properties
-- **LUT Operations**: Generate, load, and save Look-Up Tables
-- **Batch Processing**: Apply transforms to multiple images efficiently
+This library uses the `$OCIO` environment variable as the primary way to identify your color configuration. Set it in your environment before launching Griptape Nodes:
 
-### Node Categories
-All nodes are organized under the **OpenColor** category and include:
-
-#### Configuration Nodes
-- **Load OCIO Config**: Load and validate OCIO configuration files
-- **OCIO Config Info**: Extract detailed information from OCIO configs
-
-#### Transform Nodes  
-- **Color Space Transform**: Convert images between color spaces
-- **Apply Look**: Apply artistic looks to images
-- **Display Transform**: Apply display transforms for specific devices
-- **Custom Transform**: Apply custom transform matrices or operations
-
-#### Analysis Nodes
-- **Color Space Analysis**: Analyze image color properties and statistics
-- **Gamut Check**: Check for out-of-gamut pixels and generate warnings
-
-#### Utility Nodes
-- **LUT Generator**: Generate LUTs from OCIO transforms
-- **Batch Color Transform**: Apply color transforms to multiple images
-
-#### I/O Nodes
-- **Load LUT**: Load LUT files for use in transforms
-- **Save LUT**: Save LUT data to various formats
-
-## Installation
-
-This library requires the following dependencies:
-- `PyOpenColorIO>=2.3.0` - Official OpenColorIO Python bindings
-- `Pillow>=10.0.0` - Image processing
-- `numpy>=1.24.0` - Numerical operations
-
-Dependencies are automatically installed when the library is registered in Griptape Nodes.
-
-## Usage
-
-### Basic Color Space Conversion Workflow
-
-1. **Load OCIO Config** → Load your OCIO configuration file
-2. **Color Space Transform** → Connect input image and config, select source/destination color spaces
-3. Output the transformed image
-
-### Look Development Workflow  
-
-1. **Load OCIO Config** → Load configuration with defined looks
-2. **Apply Look** → Connect image, config, and select desired look
-3. **Display Transform** → Apply display transform for preview
-4. Compare results visually
-
-### Batch Processing Workflow
-
-1. **Load OCIO Config** → Load your configuration  
-2. **Batch Color Transform** → Connect multiple input images and transform settings
-3. Process all images with consistent color transforms
-
-### Analysis Workflow
-
-1. **Load OCIO Config** → Load configuration
-2. **Color Space Analysis** → Analyze color properties of input images
-3. **Gamut Check** → Identify out-of-gamut pixels for quality control
-
-## OCIO Configuration Files
-
-This library works with standard OCIO configuration files (.ocio). Popular configs include:
-
-- **ACES** - Academy Color Encoding System configs
-- **OpenColorIO-Configs** - Community-maintained configurations  
-- **Studio-specific** - Custom configurations for specific pipelines
-
-Config files define:
-- Available color spaces (sRGB, Rec709, ACES, etc.)
-- Artistic looks and creative transforms
-- Display devices and viewing transforms
-- LUT-based transforms
-
-## Advanced Features
-
-### Dynamic Parameter Population
-- Color space dropdowns automatically populate from loaded configs
-- Look and display options update based on config contents
-- Context variable support for flexible configurations
-
-### Performance Optimization
-- Processor caching for repeated transforms
-- Batch processing with parallel execution
-- Memory-efficient handling of large images
-
-### Professional Workflows
-- Soft-proofing for different display devices
-- Gamut mapping and out-of-gamut warnings
-- LUT generation for offline processing
-- Statistical analysis of color data
-
-## Node Library Registration
-
-To use this library in Griptape Nodes:
-
-1. Ensure the OpenColorIO library is installed in your workspace
-2. Navigate to Settings → App Events → Libraries to Register
-3. Add the absolute path to: `opencolorio/griptape-nodes-library.json`
-4. Restart Griptape Nodes
-5. Find the nodes under the "OpenColor" category in the Libraries panel
-
-## Example Workflows
-
-### Film Dailies Pipeline
-```
-Load OCIO Config → Color Space Transform (Log to sRGB) → Display Transform (Rec709) → Output
+```bash
+export OCIO=/path/to/your/config.ocio
 ```
 
-### VFX Shot Preparation  
-```
-Load OCIO Config → Color Space Transform (sRGB to ACES) → Apply Look (Film Emulation) → Save LUT
-```
+Most studio workstations and render environments will have `$OCIO` set already. If you are working with a Griptape **project**, you can set it per-project in `project.yml`:
 
-### Quality Control
-```
-Load OCIO Config → Gamut Check → Color Space Analysis → Generate Report
+```yaml
+environment:
+  OCIO: "{project_dir}/config/aces.ocio"
 ```
 
-## Technical Requirements
+The `$OCIO` value is re-read live at each node execution, so switching projects automatically picks up the new config without reloading the workflow.
 
-- **OpenColorIO**: Version 2.3.0 or higher
-- **Python**: 3.8+ with numpy and Pillow
-- **Griptape Nodes**: Compatible with current engine version
-- **Memory**: Sufficient RAM for processing large images (4GB+ recommended)
+### Quick Start
 
-## Supported Formats
+1. Add a **Load OCIO Config** node to your canvas.
+   - If `$OCIO` is set, the node detects and displays the path automatically.
+   - The colorspace, display, and role dropdowns on downstream nodes populate from the loaded config.
+2. Wire the `config` output to any transform node that accepts an `OCIOConfigArtifact`.
+3. Run the workflow.
 
-### Images
-- Common formats: JPEG, PNG, TIFF, EXR, DPX
-- HDR formats: EXR, TIFF (16-bit+)
-- Sequence processing: Individual frames or batches
+### Overriding the Config (Advanced)
 
-### LUTs
-- **.cube** - Industry standard 3D LUT format
-- **.3dl** - Autodesk/Discreet 3D LUT format  
-- **.lut** - Various 1D/3D LUT formats
-- **Custom formats** via OCIO transform definitions
+If you need to use a specific config file without changing your environment — for example, to test a new config during look development — open the **Advanced** group on the **Load OCIO Config** node:
 
-## Color Spaces
+- Enable **Override OCIO Config** to reveal a file picker.
+- Select your `.ocio` file. The node will use this path instead of `$OCIO`.
+- Disable the toggle to return to environment-variable mode.
 
-Supports all color spaces defined in your OCIO configuration, typically including:
+### Implemented Nodes
 
-- **Scene-referred**: ACES2065-1, ACEScg, Linear sRGB
-- **Display-referred**: sRGB, Rec709, P3-D65, Rec2020
-- **Log formats**: LogC, Log3G10, SLog3
-- **Film emulation**: Various film stock simulations
-- **Custom**: Studio-specific working spaces
+| Node | Category | Description |
+|------|----------|-------------|
+| Load OCIO Config | Colorspace | Loads an OCIO config from `$OCIO` or an explicit path; emits an `OCIOConfigArtifact` for downstream nodes |
+| Colorspace Transform | Colorspace | Converts an image from one colorspace to another using a loaded OCIO config |
 
-## Contributing
+### Typical Workflow
 
-This library follows Griptape Node development best practices:
+```
+Load OCIO Config → Colorspace Transform → (output image)
+```
 
-- Each node is self-contained with clear parameter definitions
-- Comprehensive error handling for OCIO operations
-- Performance optimization for production use
-- Extensive parameter validation and user feedback
+---
 
-## License
+## For Library Developers
 
-This library is released under the same license as Griptape Nodes. OpenColorIO is used under its BSD license.
+### Installation
 
-## Support
+Dependencies are declared in `griptape-nodes-library.json` and installed automatically when the library is registered. To install manually for development:
 
-For issues specific to this OpenColorIO library:
-- Check OCIO configuration file validity
-- Verify color space names match config definitions
-- Ensure image formats are supported by Pillow
-- Check memory usage for large batch operations
+```bash
+uv sync --group dev
+```
 
-For general Griptape Nodes support, refer to the main Griptape documentation.
+### Registering the Library
+
+1. In Griptape Nodes, go to **Settings → App Events → Libraries to Register**.
+2. Add the absolute path to `griptape-nodes-library.json` in this repository.
+3. Restart Griptape Nodes.
+4. Nodes appear under the **Colorspace** category.
+
+### Environment Variable Registration
+
+The library registers `OCIO` as a known environment variable via the `settings` block in
+`griptape-nodes-library.json`. This surfaces the variable in the Griptape Nodes settings UI
+so users can inspect or set it without leaving the application.
+
+### Repository Layout
+
+```
+opencolorio/
+  nodes/
+    config/
+      load_ocio_config.py       # LoadOCIOConfig node
+    transform/
+      colorspace_transform.py   # ColorspaceTransform node (via AdvancedNodeLibrary)
+  artifacts/
+    ocio_config_artifact.py     # OCIOConfigArtifact dataclass
+  services/
+    colorspace_transform_service.py
+  ocio_helpers.py               # load_ocio_config(), extract_lists()
+  advanced_library.py           # AdvancedNodeLibrary registration
+griptape-nodes-library.json
+```
+
+### Adding a New Node
+
+1. Create the node class under `opencolorio/nodes/<category>/`.
+2. Add an entry to the `nodes` array in `griptape-nodes-library.json` (or register via `AdvancedNodeLibrary` if the node depends on services).
+3. Write tests under `tests/nodes/<category>/`.
+
+### Testing
+
+```bash
+uv run pytest tests/
+```

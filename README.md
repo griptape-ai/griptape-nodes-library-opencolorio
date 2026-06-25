@@ -39,16 +39,42 @@ If you need to use a specific config file without changing your environment — 
 - Select your `.ocio` file. The node will use this path instead of `$OCIO`.
 - Disable the toggle to return to environment-variable mode.
 
+### OCIO Color Parameters
+
+The **OCIO Color Parameters** node bundles the three values most transform nodes need — source colorspace, display, and view — into a single reusable `OCIOColorParamsArtifact`.
+
+**Basic usage:**
+
+1. Wire the `config` output of a **Load OCIO Config** node to the `OCIO Config` input.
+2. The three dropdowns populate from the connected config.
+3. Run the node — it emits an `OCIOColorParamsArtifact` carrying your selections.
+
+**Dropdown behaviour:**
+
+- **Source Colorspace** lists role aliases first (e.g. `scene_linear`, `compositing_log`) so the stable, pipeline-safe names appear at the top, followed by all colorspace names from the config.
+- **View** updates automatically whenever you change the **Display** selection.
+- Without a connected config the dropdowns show a placeholder and the node emits empty strings — useful for building a workflow before a config is available.
+
+**Validation:**
+
+On execution the node re-validates all three selections against the live config. If a value is no longer present (e.g. the config changed, or a value was typed in manually via a wired INPUT), an inline warning appears on the node. Execution still succeeds — the artifact is emitted with the values as-is — but the warning flags the mismatch for the artist.
+
+**Reuse:**
+
+A single **OCIO Color Parameters** node can drive multiple downstream transform nodes. Wire its `color_params` output to each consumer to keep the selection in one place.
+
 ### Implemented Nodes
 
 | Node | Category | Description |
 |------|----------|-------------|
 | Load OCIO Config | Colorspace | Loads an OCIO config from `$OCIO` or an explicit path; emits an `OCIOConfigArtifact` for downstream nodes |
+| OCIO Color Parameters | Colorspace | Bundles source colorspace, display, and view into a reusable `OCIOColorParamsArtifact`; dropdowns populate from a connected OCIO config |
 | Colorspace Transform | Colorspace | Converts an image from one colorspace to another using a loaded OCIO config |
 
 ### Typical Workflow
 
 ```
+Load OCIO Config → OCIO Color Parameters → (downstream transform nodes)
 Load OCIO Config → Colorspace Transform → (output image)
 ```
 
@@ -83,15 +109,17 @@ so users can inspect or set it without leaving the application.
 opencolorio/
   nodes/
     config/
-      load_ocio_config.py       # LoadOCIOConfig node
+      load_ocio_config.py         # LoadOCIOConfig node
+      ocio_color_parameters.py    # OCIOColorParameters node
     transform/
-      colorspace_transform.py   # ColorspaceTransform node (via AdvancedNodeLibrary)
+      colorspace_transform.py     # ColorspaceTransform node (via AdvancedNodeLibrary)
   artifacts/
-    ocio_config_artifact.py     # OCIOConfigArtifact dataclass
+    ocio_config_artifact.py       # OCIOConfigArtifact dataclass
+    ocio_color_params_artifact.py # OCIOColorParamsArtifact dataclass
   services/
     colorspace_transform_service.py
-  ocio_helpers.py               # load_ocio_config(), extract_lists()
-  advanced_library.py           # AdvancedNodeLibrary registration
+  ocio_helpers.py                 # load_ocio_config(), extract_lists()
+  advanced_library.py             # AdvancedNodeLibrary registration
 griptape-nodes-library.json
 ```
 

@@ -54,6 +54,15 @@
                 "description": "Load an OpenColorIO config from file or $OCIO environment variable",
                 "display_name": "Load OCIO Config"
             }
+        },
+        {
+            "class_name": "OCIOColorParameters",
+            "file_path": "opencolorio/nodes/config/ocio_color_parameters.py",
+            "metadata": {
+                "category": "colorspace",
+                "description": "Bundle source colorspace, display, and view into a reusable OCIOColorParamsArtifact",
+                "display_name": "OCIO Color Parameters"
+            }
         }
     ]
 }

@@ -197,16 +197,16 @@ class OCIOColorParameters(SuccessFailureNode):
         display = self.get_parameter_value("display") or ""
         view = self.get_parameter_value("view") or ""
 
-        # Validate against config if one is wired (safety net for INPUT-wired values).
-        # The framework propagates wired input values by writing to the receiving node's
-        # parameter_output_values dict. get_parameter_value returns None for settable=False
-        # INPUT-only params, so we read from parameter_output_values here.
-        config_artifact: OCIOConfigArtifact | None = self.parameter_output_values.get(self._config_param.name)
+        # Read config state from metadata — set by after_value_set when the framework
+        # propagates the upstream value. parameter_output_values is cleared before
+        # execution so cannot be used here.
+        config_connected: bool = self.metadata.get("_config_connected", False)
+        config_file_path: str | None = self.metadata.get("_config_file_path") if config_connected else None
         warnings: list[str] = []
 
-        if config_artifact is not None:
+        if config_connected:
             try:
-                config = load_ocio_config(config_artifact.file_path)
+                config = load_ocio_config(config_file_path)
                 colorspace_names = list(config.getColorSpaceNames())
                 role_names = [r for r, _ in config.getRoles()]
                 display_names = list(config.getDisplays())
@@ -229,6 +229,7 @@ class OCIOColorParameters(SuccessFailureNode):
             source_colorspace=source_colorspace,
             display=display,
             view=view,
+            config_path=config_file_path,
         )
 
         if warnings:

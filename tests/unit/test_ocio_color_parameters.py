@@ -362,13 +362,11 @@ class TestProcess:
         mock_config = _mock_ocio_config()
 
         with patch("opencolorio.nodes.config.ocio_color_parameters.load_ocio_config", return_value=mock_config):
-            # Connect config first so choices are populated before we select values.
-            node.set_parameter_value("config", artifact_in)
+            # Simulate framework propagation: calls after_value_set, which sets metadata.
+            node.after_value_set(node._config_param, artifact_in)
             node.set_parameter_value("source_colorspace", "ACEScg")
             node.set_parameter_value("display", "ACES")
             node.set_parameter_value("view", "sRGB")
-            # Simulate framework propagating the wired value to parameter_output_values.
-            node.parameter_output_values["config"] = artifact_in
             node.process()
 
         artifact_out = node.parameter_output_values.get("color_params")
@@ -386,13 +384,12 @@ class TestProcess:
         with patch(
             "opencolorio.nodes.config.ocio_color_parameters.load_ocio_config", return_value=mock_config
         ) as mock_load:
-            node.set_parameter_value("config", artifact_in)
+            # Simulate framework propagation: calls after_value_set, which sets metadata.
+            node.after_value_set(node._config_param, artifact_in)
             node.set_parameter_value("source_colorspace", "ACEScg")
-            # Simulate framework propagating the wired value to parameter_output_values.
-            node.parameter_output_values["config"] = artifact_in
             node.process()
 
-        # Must pass None (triggers CreateFromEnv) not raise
+        # Validation in process() must call load_ocio_config(None) (triggers CreateFromEnv)
         mock_load.assert_called_with(None)
 
     def test_process_warns_when_selection_absent_from_execution_config(self) -> None:
@@ -413,14 +410,49 @@ class TestProcess:
         node.set_parameter_value("source_colorspace", "ACEScg")  # valid choice in full config
         node.set_parameter_value("display", "ACES")
 
-        # At execution time the wired config has changed (simulate via parameter_output_values).
-        node.parameter_output_values["config"] = artifact_in
+        # Metadata is already set from after_value_set above; process() uses it for validation.
         with patch("opencolorio.nodes.config.ocio_color_parameters.load_ocio_config", return_value=limited_config):
             node.process()
 
         result_details = node.parameter_output_values.get("result_details", "")
         assert "not found" in result_details
         assert node.parameter_output_values.get("was_successful") is True
+
+    def test_process_forwards_explicit_config_path_to_artifact(self) -> None:
+        node = _make_node()
+        artifact_in = _make_config_artifact(file_path="/path/to/config.ocio")
+        mock_config = _mock_ocio_config()
+
+        with patch("opencolorio.nodes.config.ocio_color_parameters.load_ocio_config", return_value=mock_config):
+            # Simulate framework propagation: calls after_value_set, which sets metadata.
+            node.after_value_set(node._config_param, artifact_in)
+            node.process()
+
+        artifact_out = node.parameter_output_values.get("color_params")
+        assert isinstance(artifact_out, OCIOColorParamsArtifact)
+        assert artifact_out.config_path == "/path/to/config.ocio"
+
+    def test_process_forwards_none_config_path_for_env_var_mode(self) -> None:
+        node = _make_node()
+        artifact_in = _make_config_artifact(file_path=None)
+        mock_config = _mock_ocio_config()
+
+        with patch("opencolorio.nodes.config.ocio_color_parameters.load_ocio_config", return_value=mock_config):
+            # Simulate framework propagation: calls after_value_set, which sets metadata.
+            node.after_value_set(node._config_param, artifact_in)
+            node.process()
+
+        artifact_out = node.parameter_output_values.get("color_params")
+        assert isinstance(artifact_out, OCIOColorParamsArtifact)
+        assert artifact_out.config_path is None
+
+    def test_process_config_path_is_none_when_no_config_connected(self) -> None:
+        node = _make_node()
+        node.process()
+
+        artifact_out = node.parameter_output_values.get("color_params")
+        assert isinstance(artifact_out, OCIOColorParamsArtifact)
+        assert artifact_out.config_path is None
 
     def test_process_role_alias_does_not_warn(self) -> None:
         node = _make_node()

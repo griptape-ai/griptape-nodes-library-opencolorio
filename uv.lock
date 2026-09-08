@@ -1,6 +1,6 @@
 version = 1
-revision = 2
-requires-python = ">=3.12.0, <3.13"
+revision = 3
+requires-python = "==3.12.*"
 
 [[package]]
 name = "annotated-doc"
@@ -323,7 +323,6 @@ name = "griptape-nodes-library-opencolorio"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "griptape-nodes-engine" },
     { name = "numpy" },
     { name = "opencolorio" },
     { name = "pillow" },
@@ -331,6 +330,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "griptape-nodes-engine" },
     { name = "pyright" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -339,7 +339,6 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "griptape-nodes-engine", specifier = ">=0.82.0" },
     { name = "numpy", specifier = ">=1.24.0" },
     { name = "opencolorio", specifier = ">=2.5.2" },
     { name = "pillow", specifier = ">=10.0.0" },
@@ -347,6 +346,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "griptape-nodes-engine", specifier = ">=0.82.0" },
     { name = "pyright", specifier = ">=1.1.396" },
     { name = "pytest" },
     { name = "pytest-asyncio", specifier = ">=0.21.0" },

@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 MAKEFLAGS += --no-print-directory
 
-LIBRARY_JSON := opencolorio/griptape-nodes-library.json
+LIBRARY_JSON := griptape-nodes-library.json
 
 .PHONY: version/get
 version/get: ## Get version.
@@ -9,7 +9,7 @@ version/get: ## Get version.
 
 .PHONY: version/set
 version/set: changelog/assert-committed ## Set version. Usage: make version/set v=1.2.3
-	@jq --arg v "$(v)" '.metadata.library_version = $$v' $(LIBRARY_JSON) > $(LIBRARY_JSON).tmp
+	@jq --indent 4 --arg v "$(v)" '.metadata.library_version = $$v' $(LIBRARY_JSON) > $(LIBRARY_JSON).tmp
 	@mv $(LIBRARY_JSON).tmp $(LIBRARY_JSON)
 	@$(MAKE) version/commit
 
@@ -18,7 +18,7 @@ version/patch: changelog/assert-committed ## Bump patch version.
 	@CURRENT=$$($(MAKE) version/get); \
 	IFS='.' read -r major minor patch <<< "$$CURRENT"; \
 	NEW_VERSION="$${major}.$${minor}.$$((patch + 1))"; \
-	jq --arg v "$$NEW_VERSION" '.metadata.library_version = $$v' $(LIBRARY_JSON) > $(LIBRARY_JSON).tmp; \
+	jq --indent 4 --arg v "$$NEW_VERSION" '.metadata.library_version = $$v' $(LIBRARY_JSON) > $(LIBRARY_JSON).tmp; \
 	mv $(LIBRARY_JSON).tmp $(LIBRARY_JSON); \
 	echo "Bumped to $$NEW_VERSION"
 	@$(MAKE) version/commit
@@ -28,7 +28,7 @@ version/minor: changelog/assert-committed ## Bump minor version.
 	@CURRENT=$$($(MAKE) version/get); \
 	IFS='.' read -r major minor patch <<< "$$CURRENT"; \
 	NEW_VERSION="$${major}.$$((minor + 1)).0"; \
-	jq --arg v "$$NEW_VERSION" '.metadata.library_version = $$v' $(LIBRARY_JSON) > $(LIBRARY_JSON).tmp; \
+	jq --indent 4 --arg v "$$NEW_VERSION" '.metadata.library_version = $$v' $(LIBRARY_JSON) > $(LIBRARY_JSON).tmp; \
 	mv $(LIBRARY_JSON).tmp $(LIBRARY_JSON); \
 	echo "Bumped to $$NEW_VERSION"
 	@$(MAKE) version/commit
@@ -38,7 +38,7 @@ version/major: changelog/assert-committed ## Bump major version.
 	@CURRENT=$$($(MAKE) version/get); \
 	IFS='.' read -r major minor patch <<< "$$CURRENT"; \
 	NEW_VERSION="$$((major + 1)).0.0"; \
-	jq --arg v "$$NEW_VERSION" '.metadata.library_version = $$v' $(LIBRARY_JSON) > $(LIBRARY_JSON).tmp; \
+	jq --indent 4 --arg v "$$NEW_VERSION" '.metadata.library_version = $$v' $(LIBRARY_JSON) > $(LIBRARY_JSON).tmp; \
 	mv $(LIBRARY_JSON).tmp $(LIBRARY_JSON); \
 	echo "Bumped to $$NEW_VERSION"
 	@$(MAKE) version/commit

@@ -10,4 +10,4 @@ the `library_version` in `griptape-nodes-library.json`.
 
 <!-- Entries go in changelog.d/, one file each. See changelog.d/README.md. -->
 
-[Unreleased]: https://github.com/griptape-ai/griptape-nodes-library-opencolorio/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/griptape-ai/griptape-nodes-library-opencolorio/compare/d497b5c5f92ea0dc40ee46180ca337b0ff19bfd6...HEAD

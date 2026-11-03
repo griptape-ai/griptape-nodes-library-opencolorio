@@ -10,6 +10,8 @@ from opencolorio.artifacts.ocio_config_artifact import OCIOConfigArtifact
 from opencolorio.defaults import DEFAULT_SENTINEL, ResolvedColorParams
 from opencolorio.nodes.config.ocio_color_parameters import OCIOColorParameters
 
+CG_V4_URI = "ocio://cg-config-v4.0.0_aces-v2.0_ocio-v2.5"
+
 
 def _make_node() -> OCIOColorParameters:
     return OCIOColorParameters("test_node")
@@ -1000,3 +1002,64 @@ class TestDefaultHints:
             side_effect=RuntimeError("config exploded"),
         ):
             assert OCIOColorParameters("test_node") is not None
+
+
+class TestHintsAgainstARealConfig:
+    """Hints resolved without mocking the resolver.
+
+    Every other hint test patches resolve_color_params, which cannot show that
+    the hint was asked the wrong question. These load a real builtin config, so
+    the display the hint resolves against is the one the node would emit.
+    """
+
+    def _node_with_config(self) -> OCIOColorParameters:
+        node = _make_node()
+        node.after_value_set(node._config_param, _make_config_artifact(CG_V4_URI))
+        return node
+
+    def test_view_hint_follows_the_chosen_display(self) -> None:
+        # Given a non-default display and a view left on <default>
+        node = self._node_with_config()
+        node.set_parameter_value("display", "Display P3 - Display")
+        node.set_parameter_value("view", DEFAULT_SENTINEL)
+        node._refresh_default_hints()
+
+        # Then the badge names that display's default view, not the config's
+        badge = node._view_param.ui_options["badge"]["message"]
+        assert "ACES 2.0 - SDR 100 nits (P3 D65)" in badge
+        assert "(Rec.709)" not in badge
+
+    def test_the_view_hint_matches_what_process_emits(self) -> None:
+        # The bug this guards: hint and emitted value disagreeing about display.
+        node = self._node_with_config()
+        node.set_parameter_value("display", "Display P3 - Display")
+        node.set_parameter_value("view", DEFAULT_SENTINEL)
+        node._refresh_default_hints()
+        badge = node._view_param.ui_options["badge"]["message"]
+
+        node.process()
+        emitted = node.parameter_output_values["color_params"].view
+
+        assert f"`{emitted}`" in badge
+
+    def test_views_are_offered_under_the_default_display(self) -> None:
+        # getViews("<default>") is empty, so a naive refresh leaves nothing to pick
+        node = self._node_with_config()
+        node.set_parameter_value("display", DEFAULT_SENTINEL)
+
+        choices = node._get_options_choices(node._view_param)
+
+        assert choices != [DEFAULT_SENTINEL]
+        assert "ACES 2.0 - SDR 100 nits (Rec.709)" in choices
+
+    def test_an_explicit_view_survives_returning_to_the_default_display(self) -> None:
+        # Given a view chosen under an explicit display
+        node = self._node_with_config()
+        node.set_parameter_value("display", "Rec.1886 Rec.709 - Display")
+        node.set_parameter_value("view", "Un-tone-mapped")
+
+        # When the display goes back to the sentinel
+        node.set_parameter_value("display", DEFAULT_SENTINEL)
+
+        # Then the view the user picked is not silently discarded
+        assert node.get_parameter_value("view") == "Un-tone-mapped"

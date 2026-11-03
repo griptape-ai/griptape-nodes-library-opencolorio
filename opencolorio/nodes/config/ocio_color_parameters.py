@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from griptape_nodes.exe_types.core_types import Parameter, ParameterMessage, ParameterMode
 from griptape_nodes.exe_types.node_types import BaseNode, SuccessFailureNode
@@ -12,6 +12,9 @@ from opencolorio.artifacts.ocio_color_params_artifact import OCIOColorParamsArti
 from opencolorio.artifacts.ocio_config_artifact import OCIOConfigArtifact
 from opencolorio.defaults import DEFAULT_SENTINEL, resolve_color_params
 from opencolorio.ocio_helpers import extract_lists, load_ocio_config
+
+if TYPE_CHECKING:
+    import PyOpenColorIO as ocio
 
 # Which layer answered, phrased for the badge popover rather than for a log.
 _SOURCE_DESCRIPTIONS = {
@@ -282,6 +285,27 @@ class OCIOColorParameters(SuccessFailureNode):
         self._set_status_results(was_successful=False, result_details=message)
         self._handle_failure_exception(ValueError(message))
 
+    def _explicit_artifact(
+        self,
+        *,
+        source_colorspace: str,
+        display: str,
+        view: str,
+        config_file_path: str | None,
+    ) -> OCIOColorParamsArtifact:
+        """Build the artifact the resolver reads, with each sentinel meaning "not chosen".
+
+        One home for the sentinel-to-empty rule. process() and the hints both go
+        through here, so a hint resolves against the same display the node will
+        actually emit rather than against the config's default.
+        """
+        return OCIOColorParamsArtifact(
+            source_colorspace="" if source_colorspace == DEFAULT_SENTINEL else source_colorspace,
+            display="" if display == DEFAULT_SENTINEL else display,
+            view="" if view == DEFAULT_SENTINEL else view,
+            config_path=config_file_path,
+        )
+
     def _resolve_sentinels(
         self,
         *,
@@ -293,14 +317,15 @@ class OCIOColorParameters(SuccessFailureNode):
         provenance: list[str],
     ) -> tuple[str, str, str]:
         """Replace each sentinel with the resolver's answer, recording where it came from."""
-        explicit = OCIOColorParamsArtifact(
-            source_colorspace="" if source_colorspace == DEFAULT_SENTINEL else source_colorspace,
-            display="" if display == DEFAULT_SENTINEL else display,
-            view="" if view == DEFAULT_SENTINEL else view,
+        resolved = resolve_color_params(
+            explicit=self._explicit_artifact(
+                source_colorspace=source_colorspace,
+                display=display,
+                view=view,
+                config_file_path=config_file_path,
+            ),
             config_path=config_file_path,
         )
-
-        resolved = resolve_color_params(explicit=explicit, config_path=config_file_path)
 
         warnings.extend(resolved.warnings)
         for slot, current in (
@@ -362,12 +387,33 @@ class OCIOColorParameters(SuccessFailureNode):
             logger.warning("OCIOColorParameters '%s': could not load config: %s", self.name, e)
 
     def _refresh_view_choices(self, file_path: str | None, display: str) -> None:
+        """Offer the views of whichever display is in force, sentinel included.
+
+        getViews("<default>") returns nothing, so taking the sentinel literally
+        would collapse the list to [<default>] and _update_param_choices would
+        reset an explicit view back to the sentinel. Listing the resolved
+        display's views instead means a view survives the round trip when the
+        user switches display back to <default>.
+        """
         try:
             config = load_ocio_config(file_path)
-            view_names = list(config.getViews(display)) if display else []
-            self._update_param_choices("view", view_names, self.get_parameter_value("view") or "")
+            self._update_param_choices(
+                "view",
+                self._views_for_display(config, file_path, display),
+                self.get_parameter_value("view") or "",
+            )
         except Exception as e:
             logger.warning("OCIOColorParameters '%s': could not refresh views: %s", self.name, e)
+
+    def _views_for_display(self, config: ocio.Config, file_path: str | None, display: str) -> list[str]:
+        """The view names to offer for `display`, resolving the sentinel first."""
+        if display == DEFAULT_SENTINEL:
+            try:
+                display = resolve_color_params(config_path=file_path).display
+            except Exception as e:  # noqa: BLE001 - fall back to the config's own default
+                logger.debug("OCIOColorParameters '%s': could not resolve display for views: %s", self.name, e)
+                display = config.getDefaultDisplay()
+        return list(config.getViews(display)) if display else []
 
     def _clear_dropdowns(self) -> None:
         self._update_option_choices("source_colorspace", [DEFAULT_SENTINEL], DEFAULT_SENTINEL)
@@ -475,7 +521,19 @@ class OCIOColorParameters(SuccessFailureNode):
 
         self._refreshing_hints = True
         try:
-            resolved = resolve_color_params(config_path=config_file_path)
+            # Pass what the user has chosen, exactly as process() does. Without
+            # this a view hint resolves against the config's default display
+            # while the node emits the chosen display's view, and a settings
+            # default_view is validated against the wrong display too.
+            resolved = resolve_color_params(
+                explicit=self._explicit_artifact(
+                    source_colorspace=str(self.get_parameter_value("source_colorspace") or ""),
+                    display=str(self.get_parameter_value("display") or ""),
+                    view=str(self.get_parameter_value("view") or ""),
+                    config_file_path=config_file_path,
+                ),
+                config_path=config_file_path,
+            )
         except Exception as e:  # noqa: BLE001 - a hint is never worth failing over
             logger.debug("OCIOColorParameters '%s': could not resolve default hints: %s", self.name, e)
             for slot in sentinel_slots:

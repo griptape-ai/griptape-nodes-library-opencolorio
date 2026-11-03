@@ -29,6 +29,10 @@ UV_PROJECT_ENVIRONMENT=.venv-dev uv run pytest
 If the editor reports this library as FLAWED, check whether `.venv` holds more than the three
 runtime dependencies. If it does, delete it and let the engine rebuild it.
 
+Only these two belong in the repo. A `.venv` anywhere else, such as `opencolorio/.venv`, is
+left over from an older layout: the engine only ever looks beside the manifest, so a nested one
+is dead weight and safe to delete.
+
 To install all dependencies including core and extras:
 
 ```bash

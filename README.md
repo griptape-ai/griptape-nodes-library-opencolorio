@@ -103,13 +103,24 @@ The **OCIO Color Parameters** node bundles the three values most transform nodes
 
 **Dropdown behaviour:**
 
-- **Source Colorspace** lists role aliases first (e.g. `scene_linear`, `compositing_log`) so the stable, pipeline-safe names appear at the top, followed by all colorspace names from the config.
+- `<default>` is the first choice in each dropdown and is what a new node ships with. It resolves
+  when the node runs, so a node left on `<default>` follows the config rather than freezing
+  today's answer. The resolved value is shown greyed as a placeholder, and the badge beside the
+  label says which layer it came from.
+- **Source Colorspace** lists role aliases next (e.g. `scene_linear`, `compositing_log`) so the
+  stable, pipeline-safe names appear near the top, followed by all colorspace names from the config.
 - **View** updates automatically whenever you change the **Display** selection.
-- Without a connected config the dropdowns show a placeholder and the node emits empty strings — useful for building a workflow before a config is available.
+- Without a connected config the dropdowns offer `<default>` alone, which resolves from `$OCIO`.
+
+**An empty parameter is an error:**
+
+Leaving **Source Colorspace**, **Display** or **View** blank fails the node, with a message naming
+the fix: set it to `<default>` or pick a value. Blank is not quietly treated as `<default>`,
+because that would change what an existing workflow renders without saying so.
 
 **Validation:**
 
-On execution the node re-validates all three selections against the live config. If a value is no longer present (e.g. the config changed, or a value was typed in manually via a wired INPUT), an inline warning appears on the node. Execution still succeeds — the artifact is emitted with the values as-is — but the warning flags the mismatch for the artist.
+On execution the node re-validates all three values against the live config. If a value is no longer present (e.g. the config changed, or a value was typed in manually via a wired INPUT), an inline warning appears on the node. Execution still succeeds — the artifact is emitted with the values as-is — but the warning flags the mismatch for the artist.
 
 **Reuse:**
 

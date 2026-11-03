@@ -13,7 +13,7 @@
             }
         },
         {
-            "description": "Default colour parameters used when a node has no explicit OCIO Color Parameters input. Every value is empty by default, which means the OCIO config's own answer is used.",
+            "description": "Default colour parameters used when a node has no explicit OCIO Color Parameters input. Every value ships as <default>, which means the OCIO config's own answer is used.",
             "category": "opencolorio",
             "contents": {
                 "default_working_space": "<default>",
@@ -25,22 +25,22 @@
                 "default_working_space": {
                     "type": "string",
                     "title": "Working space",
-                    "description": "Colourspace or role that scene-linear pixels are in. Empty uses the config's scene_linear role."
+                    "description": "Colourspace or role that scene-linear pixels are in. <default> uses the config's scene_linear role."
                 },
                 "default_display": {
                     "type": "string",
                     "title": "Display",
-                    "description": "Display device to view through. Empty uses the config's default display."
+                    "description": "Display device to view through. <default> uses the config's default display."
                 },
                 "default_view": {
                     "type": "string",
                     "title": "View",
-                    "description": "View to apply on the chosen display. Empty uses the config's default view for that display."
+                    "description": "View to apply on the chosen display. <default> uses the config's default view for that display."
                 },
                 "fallback_config": {
                     "type": "string",
                     "title": "Fallback config",
-                    "description": "Config to use when $OCIO is unset, as an ocio:// URI such as ocio://cg-config-latest. Filesystem paths are rejected: set $OCIO to point at your own config. Empty leaves colour management disabled."
+                    "description": "Config to use when $OCIO is unset, as an ocio:// URI such as ocio://cg-config-latest. Filesystem paths are rejected: set $OCIO to point at your own config. <default> leaves colour management disabled."
                 }
             }
         }

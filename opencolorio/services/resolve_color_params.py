@@ -18,7 +18,7 @@ from griptape_nodes.retained_mode.events.base_events import (
 )
 
 from opencolorio.artifacts.ocio_color_params_artifact import OCIOColorParamsArtifact
-from opencolorio.defaults import DEFAULT_SENTINEL, resolve_color_params
+from opencolorio.defaults import resolve_color_params
 
 
 @dataclass(kw_only=True)
@@ -75,11 +75,15 @@ class ResolveColorParamsResultFailure(WorkflowNotAlteredMixin, ResultPayloadFail
 def handle_resolve_color_params(
     req: ResolveColorParamsRequest,
 ) -> ResolveColorParamsResultSuccess | ResolveColorParamsResultFailure:
+    # Raw strings, deliberately. _explicit_value in defaults.py is the one place
+    # that decides the sentinel and blank both mean "not chosen"; stripping here
+    # too would give that rule two homes that could drift apart. config_path is
+    # left off the artifact because the resolver takes it as its own argument and
+    # never reads explicit.config_path.
     explicit = OCIOColorParamsArtifact(
-        source_colorspace=_explicit(req.explicit_source_colorspace),
-        display=_explicit(req.explicit_display),
-        view=_explicit(req.explicit_view),
-        config_path=req.config_path,
+        source_colorspace=req.explicit_source_colorspace,
+        display=req.explicit_display,
+        view=req.explicit_view,
     )
 
     try:
@@ -113,8 +117,3 @@ def handle_resolve_color_params(
         sources=resolved.sources,
         result_details=details,
     )
-
-
-def _explicit(value: str) -> str:
-    """Treat the sentinel as "not chosen", so a consumer mirroring our dropdowns need not translate."""
-    return "" if value == DEFAULT_SENTINEL else value

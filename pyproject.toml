@@ -55,7 +55,7 @@ line-ending = "auto"
 
 [tool.pyright]
 # .venv-dev, not .venv: the dev group lives there, while .venv holds only the runtime
-# dependencies the engine installs from the manifest. See the note in the Makefile.
+# dependencies the engine installs from the manifest. See CONTRIBUTING.md for why.
 venvPath = "."
 venv = ".venv-dev"
 include = ["."]

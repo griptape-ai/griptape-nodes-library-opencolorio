@@ -3,12 +3,8 @@ MAKEFLAGS += --no-print-directory
 
 LIBRARY_JSON := griptape-nodes-library.json
 
-# Dev tooling lives in its own venv, away from the .venv the engine builds beside the manifest.
-# The dev group pulls in griptape-nodes-engine, and a single shared venv therefore installs older
-# copies of ~27 packages the engine itself uses. That venv precedes the engine's on the import
-# path, so the engine binds the stale copies, the library loads FLAWED with
-# ShadowedEnginePackagesProblem, and parts of the editor misbehave. Keeping them apart leaves
-# .venv holding only the manifest's pip_dependencies.
+# Dev tooling lives in .venv-dev, away from the .venv the engine builds beside the manifest.
+# See "Two virtual environments" in CONTRIBUTING.md for why they must stay apart.
 export UV_PROJECT_ENVIRONMENT := .venv-dev
 # An activated .venv would otherwise make uv warn on every target.
 unexport VIRTUAL_ENV

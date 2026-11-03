@@ -8,18 +8,22 @@ from opencolorio.services.colorspace_transform import (
 
 
 class TestOpenColorIOLibrary:
-    def test_get_request_handlers_returns_one_pair(self) -> None:
+    def test_get_request_handlers_returns_a_pair_per_service(self) -> None:
         handlers = OpenColorIOLibrary().get_request_handlers()
-        assert len(handlers) == 1
+        assert len(handlers) == 2
 
-    def test_request_type_is_colorspace_transform_request(self) -> None:
-        request_type, _ = OpenColorIOLibrary().get_request_handlers()[0]
-        assert request_type is ColorspaceTransformRequest
+    def test_colorspace_transform_request_is_registered(self) -> None:
+        handlers = dict(OpenColorIOLibrary().get_request_handlers())
+        assert ColorspaceTransformRequest in handlers
 
-    def test_handler_is_callable(self) -> None:
-        _, handler = OpenColorIOLibrary().get_request_handlers()[0]
-        assert callable(handler)
+    def test_every_handler_is_callable(self) -> None:
+        assert all(callable(handler) for _, handler in OpenColorIOLibrary().get_request_handlers())
 
-    def test_handler_is_handle_colorspace_transform(self) -> None:
-        _, handler = OpenColorIOLibrary().get_request_handlers()[0]
-        assert handler is handle_colorspace_transform
+    def test_colorspace_transform_maps_to_its_own_handler(self) -> None:
+        handlers = dict(OpenColorIOLibrary().get_request_handlers())
+        assert handlers[ColorspaceTransformRequest] is handle_colorspace_transform
+
+    def test_each_request_type_is_registered_once(self) -> None:
+        # The engine raises if a request type already has a handler.
+        handlers = OpenColorIOLibrary().get_request_handlers()
+        assert len({request_type for request_type, _ in handlers}) == len(handlers)

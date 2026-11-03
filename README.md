@@ -74,15 +74,19 @@ For each value the first answer available wins:
 4. Nothing, leaving the value empty.
 
 The settings layer sits above the config so that a show can output Rec.709 on a config whose
-default display is sRGB, without forking the config. Four settings are available, all empty by
-default:
+default display is sRGB, without forking the config. Four settings are available, each shipping
+as `<default>`, which means the same as unset:
 
-| Setting | Empty means |
+| Setting | `<default>` means |
 |---|---|
 | **Working space** | Use the config's `scene_linear` role. |
 | **Display** | Use the config's default display. |
 | **View** | Use the config's default view for the chosen display. |
 | **Fallback config** | Leave colour management disabled when `$OCIO` is unset. |
+
+Clearing one to blank also reads as unset, but the setting then disappears from the panel until
+you set it again: the engine drops blank-string entries as it loads each config layer, and the
+editor lists the keys it finds in the config rather than the ones the library declares.
 
 A value that does not exist in your config logs a warning and falls through to the config's own
 answer rather than failing a render. Nodes report which layer answered, so you can always see why

@@ -21,6 +21,7 @@ from griptape_nodes.retained_mode.events.config_events import (
 )
 
 from opencolorio.defaults import (
+    DEFAULT_SENTINEL,
     SETTING_DISPLAY,
     SETTING_FALLBACK_CONFIG,
     SETTING_VIEW,
@@ -224,3 +225,42 @@ class TestSettingsReader:
             resolved = resolve_color_params(config_path=CG_V4_URI)
 
         assert resolved.sources["display"] == SOURCE_CONFIG_DEFAULT_DISPLAY
+
+
+class TestSentinelSettingValue:
+    """The shipped value is `<default>`, and it means the same as unset.
+
+    The engine drops blank strings as each config layer loads, on the basis that
+    a layer holding "" states nothing about that setting. Shipping all four as ""
+    therefore left the category empty, and the editor, which iterates the config
+    contents rather than the schema, had no rows to draw and hid the section.
+    `<default>` survives the loader while still meaning "not chosen".
+    """
+
+    def test_the_sentinel_is_treated_as_unset(self) -> None:
+        with settings_patch(**{SETTING_DISPLAY: DEFAULT_SENTINEL}):
+            resolved = resolve_color_params(config_path=CG_V4_URI)
+
+        assert resolved.display == "sRGB - Display"
+        assert resolved.sources["display"] == SOURCE_CONFIG_DEFAULT_DISPLAY
+
+    def test_the_sentinel_does_not_warn_as_invalid(self) -> None:
+        with settings_patch(**{SETTING_WORKING_SPACE: DEFAULT_SENTINEL}):
+            resolved = resolve_color_params(config_path=CG_V4_URI)
+
+        assert resolved.sources["working_space"] != SOURCE_SETTINGS_INVALID
+        assert not any(DEFAULT_SENTINEL in warning for warning in resolved.warnings)
+
+    def test_a_sentinel_fallback_config_is_ignored(self) -> None:
+        # It must not be mistaken for a bad ocio:// URI and warned about.
+        with settings_patch(**{SETTING_FALLBACK_CONFIG: DEFAULT_SENTINEL}):
+            resolved = resolve_color_params()
+
+        assert resolved.config_path is None
+        assert not any(DEFAULT_SENTINEL in warning for warning in resolved.warnings)
+
+    def test_a_real_value_still_wins(self) -> None:
+        with settings_patch(**{SETTING_DISPLAY: "Rec.1886 Rec.709 - Display"}):
+            resolved = resolve_color_params(config_path=CG_V4_URI)
+
+        assert resolved.sources["display"] == SOURCE_SETTINGS

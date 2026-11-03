@@ -39,39 +39,30 @@ If you need to use a specific config file without changing your environment — 
 - Select your `.ocio` file. The node will use this path instead of `$OCIO`.
 - Disable the toggle to return to environment-variable mode.
 
-### Pinning the OCIO Config per Project
+### Choosing the Config
 
-`$OCIO` is the one way to point at your own config, and it layers through the engine's config
-system like any other setting. A project can commit a `griptape_nodes_config.json` next to its
-`griptape-nodes-project.yml`, and every workflow in that project inherits it:
+Three ways to point at a config, in the order a node consults them:
 
-```json
-{
-  "app_events": {
-    "on_app_initialization_complete": {
-      "secrets_to_register": {
-        "OCIO": "/studio/shows/atlas/config/atlas.ocio"
-      }
-    }
-  }
-}
-```
+1. **Override OCIO Config** on the **Load OCIO Config** node, saved with the workflow.
+2. `$OCIO` in the environment the engine starts in.
+3. The **Fallback config** setting, for when `$OCIO` is unset.
 
-Settings layer in this order, each overriding the one before it: your user global config, the
-project-adjacent `griptape_nodes_config.json`, the workspace, then `GTN_CONFIG_*` environment
-variables. So a show config committed alongside the project wins over your personal default, and
-an environment variable wins over both, which is what a render farm needs.
+There is no per-project pin today. `secrets_to_register` in a project-adjacent
+`griptape_nodes_config.json` does not provide one: the engine writes those values to the *global*
+`~/.config/griptape_nodes/.env`, and only when the secret is not already set, so the first value
+written wins for every project afterwards. Set `$OCIO` in the environment that launches the
+engine, or use the node override, which travels with the workflow.
 
 ### Default Colour Parameters
 
-Nodes resolve a source colourspace, display and view on their own when you have not chosen one.
-For each value the first answer available wins:
+Set a parameter to `<default>` and the node resolves it for you. For each value the first answer
+available wins:
 
-1. What you picked on the node.
+1. What you picked on the node, when it is not `<default>`.
 2. A **Settings → OpenColorIO** override.
 3. The config's own answer: the `scene_linear` role, the File Rules for the file being read, and
    the default display and view.
-4. Nothing, leaving the value empty.
+4. Nothing, leaving the value empty, which happens only when no config is in play.
 
 The settings layer sits above the config so that a show can output Rec.709 on a config whose
 default display is sRGB, without forking the config. Four settings are available, each shipping
@@ -91,6 +82,9 @@ editor lists the keys it finds in the config rather than the ones the library de
 A value that does not exist in your config logs a warning and falls through to the config's own
 answer rather than failing a render. Nodes report which layer answered, so you can always see why
 a value was chosen.
+
+These settings apply to parameters left on `<default>`. A parameter left *blank* is an error, not
+a request for a default; the node says so and names the fix.
 
 **Fallback config** accepts `ocio://` URIs only, such as `ocio://cg-config-latest` or a pinned
 `ocio://cg-config-v4.0.0_aces-v2.0_ocio-v2.5`. These are the configs that ship inside OpenColorIO,

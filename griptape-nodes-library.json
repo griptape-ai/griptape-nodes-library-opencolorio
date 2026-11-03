@@ -16,10 +16,10 @@
             "description": "Default colour parameters used when a node has no explicit OCIO Color Parameters input. Every value is empty by default, which means the OCIO config's own answer is used.",
             "category": "opencolorio",
             "contents": {
-                "default_working_space": "",
-                "default_display": "",
-                "default_view": "",
-                "fallback_config": ""
+                "default_working_space": "<default>",
+                "default_display": "<default>",
+                "default_view": "<default>",
+                "fallback_config": "<default>"
             },
             "schema": {
                 "default_working_space": {

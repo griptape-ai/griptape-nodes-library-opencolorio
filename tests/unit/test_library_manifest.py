@@ -42,9 +42,16 @@ class TestOpenColorIOSettings:
     def test_it_declares_exactly_the_expected_keys(self) -> None:
         assert set(_opencolorio_setting()["contents"]) == EXPECTED_SETTING_KEYS
 
-    def test_every_value_ships_empty(self) -> None:
-        # Installing the library must change nothing for an existing workflow.
-        assert all(value == "" for value in _opencolorio_setting()["contents"].values())
+    def test_every_value_ships_as_the_sentinel(self) -> None:
+        # Not "": the engine drops blank strings as each config layer loads, so a
+        # category of all-blank values arrives empty and the editor, which draws a
+        # row per key present in the config, renders no section at all. The sentinel
+        # is non-blank, and the resolver reads it as "not chosen", so installing the
+        # library still changes nothing for an existing workflow.
+        assert all(value == "<default>" for value in _opencolorio_setting()["contents"].values())
+
+    def test_no_value_is_blank(self) -> None:
+        assert not any(value.strip() == "" for value in _opencolorio_setting()["contents"].values())
 
     def test_every_value_is_a_scalar_string(self) -> None:
         # The editor skips nested dicts, so a nested value would never render.

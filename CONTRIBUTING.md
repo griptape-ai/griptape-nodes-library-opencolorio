@@ -8,6 +8,31 @@ This project uses [uv](https://docs.astral.sh/uv/) for dependency management. In
 make install/dev
 ```
 
+### Two virtual environments
+
+Dev tooling installs into `.venv-dev`, and `.venv` is left to the engine.
+
+The engine builds `.venv` beside the manifest and installs only the `pip_dependencies` the
+manifest declares, then splices that directory onto its own import path. The dev group pulls in
+`griptape-nodes-engine`, so sharing one venv puts older copies of around 27 packages the engine
+also uses ahead of the engine's own. The library then loads as FLAWED with
+`ShadowedEnginePackagesProblem`, and unrelated parts of the editor misbehave, which is hard to
+trace back to here.
+
+The Makefile sets `UV_PROJECT_ENVIRONMENT`, so `make` targets use the right one. Running `uv`
+directly needs it too:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-dev uv run pytest
+```
+
+If the editor reports this library as FLAWED, check whether `.venv` holds more than the three
+runtime dependencies. If it does, delete it and let the engine rebuild it.
+
+Only these two belong in the repo. A `.venv` anywhere else, such as `opencolorio/.venv`, is
+left over from an older layout: the engine only ever looks beside the manifest, so a nested one
+is dead weight and safe to delete.
+
 To install all dependencies including core and extras:
 
 ```bash

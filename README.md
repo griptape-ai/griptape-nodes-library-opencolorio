@@ -87,8 +87,12 @@ Load OCIO Config → Colorspace Transform → (output image)
 Dependencies are declared in `griptape-nodes-library.json` and installed automatically when the library is registered. To install manually for development:
 
 ```bash
-uv sync --group dev
+make install/dev
 ```
+
+Use the `make` target rather than `uv sync --group dev` directly. Dev tooling belongs in
+`.venv-dev`, and plain `uv` would install it into the `.venv` the engine builds beside the
+manifest, which makes the library load as FLAWED. See [CONTRIBUTING.md](CONTRIBUTING.md) for why.
 
 ### Registering the Library
 
@@ -132,5 +136,7 @@ griptape-nodes-library.json
 ### Testing
 
 ```bash
-uv run pytest tests/
+make test/unit
 ```
+
+A direct `uv run` needs `UV_PROJECT_ENVIRONMENT=.venv-dev`, for the reason above.

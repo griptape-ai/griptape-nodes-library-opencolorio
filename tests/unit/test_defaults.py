@@ -13,6 +13,7 @@ wiring, while these exercise what OCIO itself answers.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import PyOpenColorIO as ocio
@@ -36,6 +37,18 @@ from opencolorio.defaults import (
 CG_V1_URI = "ocio://cg-config-v1.0.0_aces-v1.3_ocio-v2.1"
 CG_V2_URI = "ocio://cg-config-v2.2.0_aces-v1.3_ocio-v2.4"
 CG_V4_URI = "ocio://cg-config-v4.0.0_aces-v2.0_ocio-v2.5"
+
+
+@dataclass
+class _ArtifactWithWorkingSpace(OCIOColorParamsArtifact):
+    """The artifact as it would look having gained a working_space field.
+
+    The resolver reads every explicit slot with getattr, so this stands in for
+    that future shape without the production artifact having to grow the field
+    before a node can set it.
+    """
+
+    working_space: str = ""
 
 
 @pytest.fixture(scope="module")
@@ -90,6 +103,25 @@ class TestLayering:
 
         config = ocio.Config.CreateFromBuiltinConfig(CG_V4_URI)
         assert resolved.view == config.getDefaultView("Rec.1886 Rec.709 - Display")
+
+    def test_explicit_working_space_wins_when_the_artifact_carries_one(self, cg_v4_path: str) -> None:
+        # The shipped artifact has no working_space field, so this stands in for
+        # the one that gains it. The layer must answer rather than fall to the role.
+        explicit = _ArtifactWithWorkingSpace(working_space="ACES2065-1", source_colorspace="", display="", view="")
+
+        resolved = resolve_color_params(explicit=explicit, config_path=cg_v4_path)
+
+        assert resolved.working_space == "ACES2065-1"
+        assert resolved.sources["working_space"] == SOURCE_EXPLICIT
+
+    def test_working_space_falls_to_the_role_without_the_field(self, cg_v4_path: str) -> None:
+        # The artifact as shipped: the explicit layer is absent, not empty-and-wrong.
+        explicit = OCIOColorParamsArtifact(source_colorspace="", display="", view="")
+
+        resolved = resolve_color_params(explicit=explicit, config_path=cg_v4_path)
+
+        assert resolved.working_space == "ACEScg"
+        assert resolved.sources["working_space"] == SOURCE_CONFIG_ROLE
 
 
 class TestNoConfig:

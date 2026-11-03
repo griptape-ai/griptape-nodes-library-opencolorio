@@ -229,7 +229,8 @@ class OCIOColorParameters(SuccessFailureNode):
         display = self.get_parameter_value("display") or ""
         view = self.get_parameter_value("view") or ""
 
-        self._reject_blank_parameters({"Source Colorspace": source_colorspace, "Display": display, "View": view})
+        if self._reject_blank_parameters({"Source Colorspace": source_colorspace, "Display": display, "View": view}):
+            return
 
         # Read config state from metadata — set by after_value_set when the framework
         # propagates the upstream value. parameter_output_values is cleared before
@@ -267,15 +268,21 @@ class OCIOColorParameters(SuccessFailureNode):
 
         self._set_status_results(was_successful=True, result_details=detail)
 
-    def _reject_blank_parameters(self, values: dict[str, str]) -> None:
-        """Fail on a blank parameter, naming the fix.
+    def _reject_blank_parameters(self, values: dict[str, str]) -> bool:
+        """Fail on a blank parameter, naming the fix. True means the caller must stop.
 
         Blank is not migrated to the sentinel. Doing that silently would change
         what a saved workflow renders, where failing says plainly what to pick.
+
+        The caller has to check the return. _handle_failure_exception only raises
+        when the Failed output has no outgoing connections; wired, it logs and
+        returns so the workflow can handle the failure, and process() would
+        otherwise carry on to emit the blank bundle and overwrite the failure
+        with was_successful=True.
         """
         blank = [label for label, value in values.items() if not value]
         if not blank:
-            return
+            return False
 
         names = ", ".join(blank)
         message = (
@@ -284,6 +291,7 @@ class OCIOColorParameters(SuccessFailureNode):
         )
         self._set_status_results(was_successful=False, result_details=message)
         self._handle_failure_exception(ValueError(message))
+        return True
 
     def _explicit_artifact(
         self,
@@ -488,7 +496,7 @@ class OCIOColorParameters(SuccessFailureNode):
     def _refresh_default_hints(self) -> None:
         """Show what each <default> parameter will resolve to, and why.
 
-        The placeholder answers "what will this be?" and the badge answers
+        The tooltip answers "what will this be?" and the badge answers
         "why?", both at zero row height. Neither writes into the parameter
         value, so the sentinel still goes over the wire and a saved workflow
         keeps resolving at run time rather than freezing today's answer.

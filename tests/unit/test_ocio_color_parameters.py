@@ -784,6 +784,26 @@ class TestBlankIsAnError:
 
         assert node.parameter_output_values.get("was_successful") is False
 
+    def test_a_wired_failure_output_still_stops_the_emit(self) -> None:
+        # _handle_failure_exception only raises when Failed has no outgoing
+        # connections; wired, it logs and returns, so process() must stop itself.
+        node = _make_node()
+        node.set_parameter_value("display", "")
+
+        with patch.object(node, "_has_outgoing_connections", return_value=True):
+            node.process()
+
+        assert "color_params" not in node.parameter_output_values
+
+    def test_a_wired_failure_output_is_not_reported_as_success(self) -> None:
+        node = _make_node()
+        node.set_parameter_value("display", "")
+
+        with patch.object(node, "_has_outgoing_connections", return_value=True):
+            node.process()
+
+        assert node.parameter_output_values.get("was_successful") is False
+
 
 class TestSentinelResolvesOnEmit:
     def test_all_three_sentinels_resolve(self) -> None:

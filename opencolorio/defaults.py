@@ -133,7 +133,10 @@ def resolve_color_params(
 
     config, resolved_config_path, no_config = _acquire_config(config_path, settings, warnings)
 
-    explicit_working_space = ""
+    # The artifact carries no working_space field today, so this is "" in
+    # practice. Reading it the same way as the others keeps the four-layer rule
+    # above true for every slot, and lights the layer up if the field is added.
+    explicit_working_space = _explicit_value(explicit, "working_space")
     explicit_source = _explicit_value(explicit, "source_colorspace")
     explicit_display = _explicit_value(explicit, "display")
     explicit_view = _explicit_value(explicit, "view")

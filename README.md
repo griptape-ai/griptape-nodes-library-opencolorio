@@ -182,6 +182,29 @@ library is unregistered, so a key shipped and later renamed is left behind in ev
 file. That is why only three colour slots ship today: `thumbnail_colorspace` and `data_colorspace`
 wait for the node that first reads them. `tests/unit/test_library_manifest.py` pins the shape.
 
+### Services Other Libraries Can Call
+
+The library registers two request handlers through `AdvancedNodeLibrary.get_request_handlers()`.
+A consuming library finds them by name through `LibraryRegistry` and never imports this package:
+
+```python
+for name in LibraryRegistry.list_libraries():
+    for request_type in LibraryRegistry.get_library(name).get_registered_request_handler_types():
+        if request_type.__name__ == "ResolveColorParamsRequest":
+            result = GriptapeNodes.handle_request(request_type(file_path=path))
+```
+
+- **`ColorspaceTransformRequest`** applies a display-view transform to an `(H, W, 3)` float32
+  array. An empty display or view is a passthrough.
+- **`ResolveColorParamsRequest`** answers what source colourspace, display and view to use, and
+  reports which layer supplied each one. With no `config_path` it runs the whole discovery chain
+  itself, so a caller with no OCIO nodes wired still gets a usable answer.
+
+Both carry primitives only, no artifact classes, precisely because a caller that discovered the
+type by name has never imported them and could not construct one. A consumer wanting to resolve
+first and then transform makes two calls, which is what lets it populate its own dropdowns and
+show the user what will happen before anything runs.
+
 ### Repository Layout
 
 ```
@@ -195,6 +218,7 @@ opencolorio/
     ocio_color_params_artifact.py # OCIOColorParamsArtifact dataclass
   services/
     colorspace_transform.py       # ColorspaceTransformRequest and its handler
+    resolve_color_params.py       # ResolveColorParamsRequest and its handler
   defaults.py                     # resolve_color_params(), the defaults resolver
   ocio_helpers.py                 # load_ocio_config(), extract_lists()
   advanced_library.py             # AdvancedNodeLibrary registration

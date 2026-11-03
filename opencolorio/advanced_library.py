@@ -6,8 +6,15 @@ from opencolorio.services.colorspace_transform import (
     ColorspaceTransformRequest,
     handle_colorspace_transform,
 )
+from opencolorio.services.resolve_color_params import (
+    ResolveColorParamsRequest,
+    handle_resolve_color_params,
+)
 
 
 class OpenColorIOLibrary(AdvancedNodeLibrary):
     def get_request_handlers(self) -> list:
-        return [(ColorspaceTransformRequest, handle_colorspace_transform)]
+        return [
+            (ColorspaceTransformRequest, handle_colorspace_transform),
+            (ResolveColorParamsRequest, handle_resolve_color_params),
+        ]

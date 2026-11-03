@@ -44,6 +44,9 @@ class OCIOColorParameters(SuccessFailureNode):
         # _update_option_choices calls set_parameter_value, which fires after_value_set,
         # which would ask for hints again partway through a refresh.
         self._refreshing_hints = False
+        # Each parameter's tooltip as authored, so a hint can be appended and removed
+        # without the resolved value accumulating across refreshes.
+        self._base_tooltips: dict[str, str] = {}
 
         # --- Optional config input ---
         self._config_param = Parameter(
@@ -488,24 +491,43 @@ class OCIOColorParameters(SuccessFailureNode):
             self._set_hint(params[slot], value=value, source=source, config_label=config_label)
 
     def _set_hint(self, param: Parameter, *, value: str, source: str, config_label: str | None) -> None:
+        """Show what this parameter resolves to, in the tooltip and in a badge.
+
+        Not in ui_options.placeholder_text. The editor passes that through as the
+        native HTML placeholder attribute, which a browser renders only while the
+        field is empty. The field holds the literal <default>, so a placeholder
+        would never be seen.
+
+        The badge message must always be set: the editor dereferences it
+        unguarded, so an absent one crashes the parameter row. hide_clear_button
+        must stay true, because Clear calls dismiss_badge(), which clears the
+        element's own badge and cannot touch one sourced from ui_options.
+        """
         explanation = _SOURCE_DESCRIPTIONS.get(source, source or "an unknown source")
         shown = value or "nothing"
         where = f" in `{config_label}`" if config_label else ""
+        summary = f"Resolves to `{shown}`, from {explanation}{where}."
+
+        # tooltip is typed str | list, but these parameters are authored with plain
+        # strings. Leave a list one alone rather than flattening someone's rich tooltip.
+        if isinstance(param.tooltip, str):
+            self._base_tooltips.setdefault(param.name, param.tooltip)
+            base = self._base_tooltips[param.name].rstrip().rstrip(".")
+            param.tooltip = f"{base}. Currently resolves to {shown}."
 
         param.ui_options = {
             **param.ui_options,
-            "placeholder_text": value,
             "badge": {
                 "variant": "info",
                 "title": "Default",
-                "message": f"Resolves to `{shown}`, from {explanation}{where}.",
+                "message": summary,
                 "hide": False,
-                # Without this the dismiss button round-trips to the backend.
                 "hide_clear_button": True,
             },
         }
 
-    @staticmethod
-    def _clear_hint(param: Parameter) -> None:
-        options = {k: v for k, v in param.ui_options.items() if k not in ("placeholder_text", "badge")}
-        param.ui_options = options
+    def _clear_hint(self, param: Parameter) -> None:
+        base = self._base_tooltips.pop(param.name, None)
+        if base is not None:
+            param.tooltip = base
+        param.ui_options = {k: v for k, v in param.ui_options.items() if k != "badge"}

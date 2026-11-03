@@ -866,7 +866,10 @@ class TestSentinelResolvesOnEmit:
 
 
 class TestDefaultHints:
-    def test_the_resolved_value_appears_as_a_placeholder(self) -> None:
+    def test_the_resolved_value_appears_in_the_tooltip(self) -> None:
+        # The editor renders placeholder_text as a native HTML placeholder, which
+        # only shows on an empty field. The value is the literal <default>, so the
+        # tooltip and badge are the only places the resolved value can surface.
         node = _make_node()
 
         with patch(
@@ -875,9 +878,20 @@ class TestDefaultHints:
         ):
             node._refresh_default_hints()
 
-        assert node._display_param.ui_options.get("placeholder_text") == "sRGB - Display"
+        assert "sRGB - Display" in node._display_param.tooltip
 
-    def test_the_placeholder_does_not_become_the_value(self) -> None:
+    def test_no_placeholder_text_is_written(self) -> None:
+        node = _make_node()
+
+        with patch(
+            "opencolorio.nodes.config.ocio_color_parameters.resolve_color_params",
+            return_value=_resolved(),
+        ):
+            node._refresh_default_hints()
+
+        assert "placeholder_text" not in node._display_param.ui_options
+
+    def test_the_hint_does_not_become_the_value(self) -> None:
         node = _make_node()
 
         with patch(
@@ -887,6 +901,50 @@ class TestDefaultHints:
             node._refresh_default_hints()
 
         assert node.get_parameter_value("display") == DEFAULT_SENTINEL
+
+    def test_the_badge_always_carries_a_message(self) -> None:
+        # The editor dereferences badge.message unguarded, so a badge without one
+        # crashes the whole parameter row rather than just failing to render.
+        node = _make_node()
+
+        with patch(
+            "opencolorio.nodes.config.ocio_color_parameters.resolve_color_params",
+            return_value=_resolved(display="", sources={"display": "no-config"}),
+        ):
+            node._refresh_default_hints()
+
+        badge = node._display_param.ui_options.get("badge")
+        assert badge is not None
+        assert badge["message"]
+
+    def test_the_badge_hides_its_clear_button(self) -> None:
+        # Clear calls dismiss_badge(), which only clears a top-level badge and so
+        # cannot clear one sourced from ui_options. Showing the button would offer
+        # the user an action that does nothing.
+        node = _make_node()
+
+        with patch(
+            "opencolorio.nodes.config.ocio_color_parameters.resolve_color_params",
+            return_value=_resolved(),
+        ):
+            node._refresh_default_hints()
+
+        assert node._display_param.ui_options["badge"]["hide_clear_button"] is True
+
+    def test_an_explicit_parameter_keeps_its_original_tooltip(self) -> None:
+        # __init__ runs a hint pass, so capture the authored tooltip by clearing first.
+        node = _make_node()
+        node._clear_hint(node._display_param)
+        original = node._display_param.tooltip
+        node.set_parameter_value("display", "sRGB")
+
+        with patch(
+            "opencolorio.nodes.config.ocio_color_parameters.resolve_color_params",
+            return_value=_resolved(),
+        ):
+            node._refresh_default_hints()
+
+        assert node._display_param.tooltip == original
 
     def test_the_badge_names_the_layer(self) -> None:
         node = _make_node()

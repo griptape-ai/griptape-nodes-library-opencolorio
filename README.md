@@ -105,8 +105,8 @@ The **OCIO Color Parameters** node bundles the three values most transform nodes
 
 - `<default>` is the first choice in each dropdown and is what a new node ships with. It resolves
   when the node runs, so a node left on `<default>` follows the config rather than freezing
-  today's answer. The resolved value is shown greyed as a placeholder, and the badge beside the
-  label says which layer it came from.
+  today's answer. Hover the parameter to see what it currently resolves to, or click the badge
+  beside the label for the value and which layer supplied it.
 - **Source Colorspace** lists role aliases next (e.g. `scene_linear`, `compositing_log`) so the
   stable, pipeline-safe names appear near the top, followed by all colorspace names from the config.
 - **View** updates automatically whenever you change the **Display** selection.

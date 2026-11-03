@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from opencolorio.advanced_library import OpenColorIOLibrary
-from opencolorio.defaults import DEFAULT_SENTINEL
+from opencolorio.defaults import DEFAULT_SENTINEL, ResolvedColorParams
 from opencolorio.services.resolve_color_params import (
     ResolveColorParamsRequest,
     ResolveColorParamsResultFailure,
@@ -22,6 +22,18 @@ from opencolorio.services.resolve_color_params import (
 
 CG_V4_URI = "ocio://cg-config-v4.0.0_aces-v2.0_ocio-v2.5"
 CG_V1_URI = "ocio://cg-config-v1.0.0_aces-v1.3_ocio-v2.1"
+
+
+def _resolved() -> ResolvedColorParams:
+    """A stand-in result, for the tests that care only about what the handler passes in."""
+    return ResolvedColorParams(
+        working_space="ACEScg",
+        source_colorspace="ACEScg",
+        display="sRGB - Display",
+        view="Raw",
+        config_path=None,
+        sources={},
+    )
 
 
 class TestResultPayloads:
@@ -121,6 +133,30 @@ class TestHandler:
         assert result.display == "sRGB - Display"
         assert result.sources["display"] != "explicit"
 
+    def test_the_sentinel_and_blank_agree(self) -> None:
+        # The service hands the sentinel to the resolver untranslated, so this is
+        # what pins the two spellings of "not chosen" to the same answer.
+        sentinel = handle_resolve_color_params(
+            ResolveColorParamsRequest(config_path=CG_V4_URI, explicit_view=DEFAULT_SENTINEL)
+        )
+        blank = handle_resolve_color_params(ResolveColorParamsRequest(config_path=CG_V4_URI, explicit_view=""))
+
+        assert isinstance(sentinel, ResolveColorParamsResultSuccess)
+        assert isinstance(blank, ResolveColorParamsResultSuccess)
+        assert sentinel.view == blank.view
+        assert sentinel.sources == blank.sources
+
+    def test_the_request_reaches_the_resolver_unstripped(self) -> None:
+        # Guards the de-duplication: if the service starts translating the
+        # sentinel again, the resolver stops being the only place that knows.
+        with patch("opencolorio.services.resolve_color_params.resolve_color_params") as resolver:
+            resolver.return_value = _resolved()
+            handle_resolve_color_params(
+                ResolveColorParamsRequest(config_path=CG_V4_URI, explicit_display=DEFAULT_SENTINEL)
+            )
+
+        assert resolver.call_args.kwargs["explicit"].display == DEFAULT_SENTINEL
+
     def test_file_path_drives_the_file_rules(self) -> None:
         result = handle_resolve_color_params(
             ResolveColorParamsRequest(config_path=CG_V4_URI, file_path="/shots/sh010/plate.exr")
@@ -167,8 +203,10 @@ class TestHandler:
 
 
 class TestRegistration:
-    def test_both_handlers_are_registered(self) -> None:
-        assert len(OpenColorIOLibrary().get_request_handlers()) == 2
+    """Discovery of this request by name. The registry's shape - how many
+    handlers, each registered once - is asserted in test_advanced_library.py,
+    so a third service breaks one file rather than two.
+    """
 
     def test_the_resolve_request_is_registered(self) -> None:
         handlers = dict(OpenColorIOLibrary().get_request_handlers())

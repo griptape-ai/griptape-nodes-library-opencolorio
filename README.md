@@ -205,6 +205,12 @@ type by name has never imported them and could not construct one. A consumer wan
 first and then transform makes two calls, which is what lets it populate its own dropdowns and
 show the user what will happen before anything runs.
 
+Pass `result.config_path` from the first call into the second. The resolved names belong to the
+config that answered, which may be the one the `fallback_config` setting named rather than
+whatever `$OCIO` points at. Sending `ColorspaceTransformRequest` with `config_path=None` instead
+resolves the config afresh, and a name like `sRGB - Display` will not exist in the raw config, so
+the transform fails.
+
 ### Repository Layout
 
 ```

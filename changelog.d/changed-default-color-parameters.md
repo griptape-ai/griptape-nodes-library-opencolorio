@@ -4,5 +4,5 @@
   own roles, File Rules and default display and view, and new nodes ship with all three set to it.
   To fix a workflow that now fails, set the empty parameter to `<default>` or pick a value. Nodes
   show the resolved value as a placeholder and name the layer it came from in a badge beside the
-  label. This release also requires Griptape Nodes engine 0.106.0 or newer.
+  label.
   [#40](https://github.com/griptape-ai/griptape-nodes-library-opencolorio/issues/40)

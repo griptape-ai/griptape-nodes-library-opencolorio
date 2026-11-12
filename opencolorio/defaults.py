@@ -432,6 +432,12 @@ def _read_settings() -> dict[str, str]:
 def _get_setting(key: str) -> str:
     """Read one library setting, or return empty if it is unset or unreadable.
 
+    The sentinel reads as unset. These settings ship as `<default>` rather than
+    "" because the engine drops blank strings as each config layer loads, on the
+    basis that a layer holding "" states nothing about that setting. Shipping ""
+    left the whole category empty, and the editor draws a row per key it finds in
+    the config rather than per key in the schema, so the section never appeared.
+
     GriptapeNodes is reached through its module rather than imported by name, so
     that the autouse fixture patching it at its definition site takes effect.
     A from-import would bind the real class before the patch ran.
@@ -448,7 +454,8 @@ def _get_setting(key: str) -> str:
         return ""
 
     if isinstance(result, GetConfigValueResultSuccess) and isinstance(result.value, str):
-        return result.value.strip()
+        value = result.value.strip()
+        return "" if value == DEFAULT_SENTINEL else value
     return ""
 
 

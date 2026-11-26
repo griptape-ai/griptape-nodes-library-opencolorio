@@ -9,7 +9,7 @@ You want a workflow to use your studio's or show's colour setup, for example an 
 
 ## What it needs
 
-- An OCIO config file. By default the node uses the one named by the `$OCIO` environment variable, which most studio workstations already set. To use a different file, open **Advanced**, set **Override OCIO Config** to on and pick a `.ocio` file.
+- An OCIO config file. By default the node uses the one named by the `$OCIO` environment variable, which most studio workstations already set. You can also set `OCIO` in the Griptape Nodes Settings, which takes effect without a restart. To use a different file, open **Advanced**, set **Override OCIO Config** to on and pick a `.ocio` file.
 - OpenColorIO 2.5.2 or later. The library installs it with its other Python dependencies.
 - `$OCIO` can also hold the name of one of OpenColorIO's own ACES configs, such as `ocio://default`.
 - If `$OCIO` is not set and the override is off, the node still runs, with a minimal config that has one colour space (`raw`), one display (`sRGB`) and one view (`Raw`). A warning on the node tells you `$OCIO` is not set. Set `$OCIO` or use the override to get your real config.

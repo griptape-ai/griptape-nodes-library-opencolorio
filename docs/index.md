@@ -8,7 +8,7 @@ The library does not change images itself. It provides the config and colour cho
 
 ## Requirements
 
-- An OCIO config file, such as your studio's ACES config. Set the `$OCIO` environment variable to its path before launching Griptape Nodes, or pick the file on the Load OCIO Config node. In a Griptape project, `OCIO` can be set under `environment:` in `project.yml`.
+- An OCIO config file, such as your studio's ACES config. Set the `$OCIO` environment variable to its path before launching Griptape Nodes, set `OCIO` in the Griptape Nodes Settings (no restart needed), or pick the file on the Load OCIO Config node. In a Griptape project, `OCIO` can be set under `environment:` in `project.yml`.
 - Griptape Nodes engine 0.106.0 or later.
 - The library installs its own Python dependencies: `opencolorio` 2.5.2 or later, `Pillow` and `numpy`.
 - The OpenEXR library, to use the result. It is a separate library.

@@ -23,7 +23,7 @@ An ACES show config is loaded. In **OCIO Color Parameters**, set `source_colorsp
 
 ### source_colorspace
 
-Names the space the pixels are stored in. The list shows the config's roles first, in alphabetical order, such as `aces_interchange`, `compositing_log` and `scene_linear`. After them come every colour space in the config's own order, including display spaces such as `sRGB - Display` and `Raw`. A role name keeps working when a later version of the config renames the colour space behind it. A raw colour space name may not exist in the next version.
+Names the space the pixels are stored in. The list shows the config's roles first, in alphabetical order, such as `aces_interchange`, `compositing_log` and `scene_linear`. After them come every colour space in the config's own order. That includes display-referred spaces such as `sRGB - Display`, which are not the source space of a scene-linear render, and the data space `Raw`. A role name keeps working when a later version of the config renames the colour space behind it. A colour space name used directly may not exist in the next version.
 
 The default is the first role in the list. In the ACES configs that is `aces_interchange`, which is ACES2065-1, not the ACEScg space most renders use. Choose `scene_linear` (ACEScg in these configs) or `ACEScg` yourself for ACEScg renders.
 

@@ -3,7 +3,9 @@ description: Bundles a source colour space, a display and a view from an OCIO co
 when_to_use: Use it when an EXR node should show an image through your pipeline's display transform, such as an ACES view, instead of its built-in transforms.
 ---
 
-## What it does
+## When to use it
+
+Use it when you want an EXR preview to match what your pipeline shows, for example an ACEScg render through the show's SDR view.
 
 This node is where you tell the workflow what colour your image is in and how to show it. You make three choices from your studio's colour config (an OCIO config, the file that lists your pipeline's colour settings):
 
@@ -11,7 +13,7 @@ This node is where you tell the workflow what colour your image is in and how to
 - `display`: the kind of monitor or screen you are viewing on.
 - `view`: the way the image is shown on that display, such as an SDR video look. Together, the display and view make up the display transform, the conversion that turns scene-linear pixels into something that looks right on screen.
 
-The node outputs the three choices as `color_params`. One node can feed several EXR nodes, so the choice is made in one place. Use it when you want an EXR preview to match what your pipeline shows, for example an ACEScg render through the show's SDR view.
+The node outputs the three choices as `color_params`. One node can feed several EXR nodes, so the choice is made in one place.
 
 The OpenEXR library's **Read EXR**, **Display EXR Part**, **Display EXR Channel** and **EXR Sequence to Preview** nodes accept `color_params`. On each of them, set `color_mode` to `ocio`, which shows `color_params`, and connect it. The node then transforms the pixels from the source colour space through the display and view you chose. The run stops with a message if `color_mode` is `ocio` and nothing is connected, if a name is not in the config, or if this library is not loaded.
 
@@ -23,7 +25,7 @@ The OpenEXR library's **Read EXR**, **Display EXR Part**, **Display EXR Channel*
 
 ## Example
 
-An ACES show config is loaded. In **OCIO Color Parameters**, set `source_colorspace` to `scene_linear` (a role, a standard name the config points at the right colour space) for scene-linear renders, or `ACEScg` if you want to name the space directly. Set `display` to the display your monitors use and `view` to the SDR view. The names come from your config. Connect `color_params` to **Read EXR** and **EXR Sequence to Preview**, so the still and the review video look the same.
+An ACES show config is loaded. In **OCIO Color Parameters**, set `source_colorspace` to `scene_linear` (a role: a standard name that the config points at the right colour space) for scene-linear renders, or `ACEScg` if you want to name the space directly. Set `display` to the display your monitors use and `view` to the SDR view. The names come from your config. Connect `color_params` to **Read EXR** and **EXR Sequence to Preview**, so the still and the review video look the same.
 
 ## Parameters
 

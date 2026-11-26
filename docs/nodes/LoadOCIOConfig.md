@@ -3,11 +3,13 @@ description: Loads the OpenColorIO (OCIO) config that defines your pipeline's co
 when_to_use: "Use it at the start of any colour-managed workflow, to give OCIO Color Parameters and other OCIO nodes the studio or show config."
 ---
 
-## What it does
+## When to use it
 
-This node finds your studio's colour management file and makes it available to the rest of the workflow. That file is an OCIO config (OCIO is short for OpenColorIO). It is a `.ocio` file that lists the colour spaces your pipeline uses. A colour space describes how the numbers in an image map to real colours, for example ACEScg for renders. The file also lists roles, which are standard jobs such as `scene_linear` that point at a colour space, and the displays and views you can show an image through. A display is a kind of monitor or screen. A view is a way of showing an image on that display, for example an SDR video look.
+Use it when you want a workflow to follow your studio's or show's colour setup, such as an ACES config, instead of a generic display transform.
 
-Use it when you want a workflow to follow your studio's or show's colour setup, such as an ACES config, instead of a generic display transform. The node passes the file on as the `config` output. Connect `config` to [OCIO Color Parameters](OCIOColorParameters.md).
+This node finds your studio's colour management file and makes it available to the rest of the workflow. That file is an OCIO config (OCIO is short for OpenColorIO). It is a `.ocio` file that lists the colour spaces your pipeline uses. A colour space describes how the numbers in an image map to real colours, for example ACEScg for renders. The file also lists roles, which are standard names such as `scene_linear` that each point at a colour space, and the displays and views you can show an image through. A display is a kind of monitor or screen. A view is a way of showing an image on that display, for example an SDR video look.
+
+The node passes the file on as the `config` output. Connect `config` to [OCIO Color Parameters](OCIOColorParameters.md).
 
 ## What it needs
 

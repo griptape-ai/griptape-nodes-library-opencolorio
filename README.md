@@ -39,6 +39,58 @@ If you need to use a specific config file without changing your environment — 
 - Select your `.ocio` file. The node will use this path instead of `$OCIO`.
 - Disable the toggle to return to environment-variable mode.
 
+### Choosing the Config
+
+Three ways to point at a config, in the order a node consults them:
+
+1. **Override OCIO Config** on the **Load OCIO Config** node, saved with the workflow.
+2. `$OCIO` in the environment the engine starts in.
+3. The **Fallback config** setting, for when `$OCIO` is unset.
+
+There is no per-project pin today. `secrets_to_register` in a project-adjacent
+`griptape_nodes_config.json` does not provide one: the engine writes those values to the *global*
+`~/.config/griptape_nodes/.env`, and only when the secret is not already set, so the first value
+written wins for every project afterwards. Set `$OCIO` in the environment that launches the
+engine, or use the node override, which travels with the workflow.
+
+### Default Colour Parameters
+
+Set a parameter to `<default>` and the node resolves it for you. For each value the first answer
+available wins:
+
+1. What you picked on the node, when it is not `<default>`.
+2. A **Settings → OpenColorIO** override.
+3. The config's own answer: the `scene_linear` role, the File Rules for the file being read, and
+   the default display and view.
+4. Nothing, leaving the value empty, which happens only when no config is in play.
+
+The settings layer sits above the config so that a show can output Rec.709 on a config whose
+default display is sRGB, without forking the config. Four settings are available, each shipping
+as `<default>`, which means the same as unset:
+
+| Setting | `<default>` means |
+|---|---|
+| **Working space** | Use the config's `scene_linear` role. |
+| **Display** | Use the config's default display. |
+| **View** | Use the config's default view for the chosen display. |
+| **Fallback config** | Leave colour management disabled when `$OCIO` is unset. |
+
+Clearing one to blank also reads as unset, but the setting then disappears from the panel until
+you set it again: the engine drops blank-string entries as it loads each config layer, and the
+editor lists the keys it finds in the config rather than the ones the library declares.
+
+A value that does not exist in your config logs a warning and falls through to the config's own
+answer rather than failing a render. Nodes report which layer answered, so you can always see why
+a value was chosen.
+
+These settings apply to parameters left on `<default>`. A parameter left *blank* is an error, not
+a request for a default; the node says so and names the fix.
+
+**Fallback config** accepts `ocio://` URIs only, such as `ocio://cg-config-latest` or a pinned
+`ocio://cg-config-v4.0.0_aces-v2.0_ocio-v2.5`. These are the configs that ship inside OpenColorIO,
+so they cannot go stale the way a path can. It applies only when `$OCIO` is unset: a `$OCIO` that
+points at a config which will not load stays an error.
+
 ### OCIO Color Parameters
 
 The **OCIO Color Parameters** node bundles the three values most transform nodes need — source colorspace, display, and view — into a single reusable `OCIOColorParamsArtifact`.
@@ -101,11 +153,23 @@ manifest, which makes the library load as FLAWED. See [CONTRIBUTING.md](CONTRIBU
 3. Restart Griptape Nodes.
 4. Nodes appear under the **Colorspace** category.
 
-### Environment Variable Registration
+### Settings Registration
 
-The library registers `OCIO` as a known environment variable via the `settings` block in
-`griptape-nodes-library.json`. This surfaces the variable in the Griptape Nodes settings UI
-so users can inspect or set it without leaving the application.
+`griptape-nodes-library.json` carries two `settings` entries.
+
+The first registers `OCIO` as a known environment variable, which surfaces it in the Griptape
+Nodes settings UI so users can inspect or set it without leaving the application.
+
+The second declares the `opencolorio` config category holding `default_working_space`,
+`default_display`, `default_view` and `fallback_config`. These are top-level scalar strings
+because the editor's Library settings page renders those and skips nested dicts. Each has a
+`schema` entry giving it a typed control with help text.
+
+Two things to know before adding a key here. Library settings are merged into the user's global
+config at registration time, with existing user values winning, and they are never pruned when a
+library is unregistered, so a key shipped and later renamed is left behind in every user's config
+file. That is why only three colour slots ship today: `thumbnail_colorspace` and `data_colorspace`
+wait for the node that first reads them. `tests/unit/test_library_manifest.py` pins the shape.
 
 ### Repository Layout
 
@@ -115,13 +179,12 @@ opencolorio/
     config/
       load_ocio_config.py         # LoadOCIOConfig node
       ocio_color_parameters.py    # OCIOColorParameters node
-    transform/
-      colorspace_transform.py     # ColorspaceTransform node (via AdvancedNodeLibrary)
   artifacts/
     ocio_config_artifact.py       # OCIOConfigArtifact dataclass
     ocio_color_params_artifact.py # OCIOColorParamsArtifact dataclass
   services/
-    colorspace_transform_service.py
+    colorspace_transform.py       # ColorspaceTransformRequest and its handler
+  defaults.py                     # resolve_color_params(), the defaults resolver
   ocio_helpers.py                 # load_ocio_config(), extract_lists()
   advanced_library.py             # AdvancedNodeLibrary registration
 griptape-nodes-library.json
@@ -131,7 +194,7 @@ griptape-nodes-library.json
 
 1. Create the node class under `opencolorio/nodes/<category>/`.
 2. Add an entry to the `nodes` array in `griptape-nodes-library.json` (or register via `AdvancedNodeLibrary` if the node depends on services).
-3. Write tests under `tests/nodes/<category>/`.
+3. Write tests under `tests/unit/`, named `test_<module>.py`.
 
 ### Testing
 

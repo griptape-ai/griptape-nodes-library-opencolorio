@@ -2,9 +2,15 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+from griptape_nodes.traits.options import Options
+
 from opencolorio.artifacts.ocio_color_params_artifact import OCIOColorParamsArtifact
 from opencolorio.artifacts.ocio_config_artifact import OCIOConfigArtifact
+from opencolorio.defaults import DEFAULT_SENTINEL, ResolvedColorParams
 from opencolorio.nodes.config.ocio_color_parameters import OCIOColorParameters
+
+CG_V4_URI = "ocio://cg-config-v4.0.0_aces-v2.0_ocio-v2.5"
 
 
 def _make_node() -> OCIOColorParameters:
@@ -51,11 +57,12 @@ class TestNodeInstantiation:
         assert "was_successful" in param_names
         assert "result_details" in param_names
 
-    def test_defaults_are_empty_strings(self) -> None:
+    def test_defaults_are_the_sentinel(self) -> None:
+        # A freshly dropped node works the moment it is wired.
         node = _make_node()
-        assert node.get_parameter_value("source_colorspace") == ""
-        assert node.get_parameter_value("display") == ""
-        assert node.get_parameter_value("view") == ""
+        assert node.get_parameter_value("source_colorspace") == DEFAULT_SENTINEL
+        assert node.get_parameter_value("display") == DEFAULT_SENTINEL
+        assert node.get_parameter_value("view") == DEFAULT_SENTINEL
 
     def test_no_config_message_visible_by_default(self) -> None:
         node = _make_node()
@@ -63,9 +70,9 @@ class TestNodeInstantiation:
 
     def test_dropdowns_visible_before_config_connected(self) -> None:
         node = _make_node()
-        assert node._get_options_choices(node._source_colorspace_param) == [""]
-        assert node._get_options_choices(node._display_param) == [""]
-        assert node._get_options_choices(node._view_param) == [""]
+        assert node._get_options_choices(node._source_colorspace_param) == [DEFAULT_SENTINEL]
+        assert node._get_options_choices(node._display_param) == [DEFAULT_SENTINEL]
+        assert node._get_options_choices(node._view_param) == [DEFAULT_SENTINEL]
 
     def test_no_config_message_hidden_on_reload_with_saved_config(self) -> None:
         mock_config = _mock_ocio_config()
@@ -342,7 +349,8 @@ class TestReloadPersistence:
 class TestProcess:
     def test_emits_artifact_without_config(self) -> None:
         node = _make_node()
-        # Without a config connected, all params are locked to placeholder "".
+        # All three are <default>, and with no config they resolve to empty,
+        # which downstream transforms already treat as passthrough.
         node.process()
 
         artifact = node.parameter_output_values.get("color_params")
@@ -423,7 +431,13 @@ class TestProcess:
         artifact_in = _make_config_artifact(file_path="/path/to/config.ocio")
         mock_config = _mock_ocio_config()
 
-        with patch("opencolorio.nodes.config.ocio_color_parameters.load_ocio_config", return_value=mock_config):
+        with (
+            patch("opencolorio.nodes.config.ocio_color_parameters.load_ocio_config", return_value=mock_config),
+            patch(
+                "opencolorio.nodes.config.ocio_color_parameters.resolve_color_params",
+                return_value=_resolved(config_path="/path/to/config.ocio"),
+            ),
+        ):
             # Simulate framework propagation: calls after_value_set, which sets metadata.
             node.after_value_set(node._config_param, artifact_in)
             node.process()
@@ -526,7 +540,7 @@ class TestAfterIncomingConnection:
         node.after_incoming_connection(source_node, source_param, node._config_param)
 
         # dropdowns should still show placeholder — no crash, no real choices
-        assert node._get_options_choices(node._display_param) == [""]
+        assert node._get_options_choices(node._display_param) == [DEFAULT_SENTINEL]
 
     def test_ignores_connection_to_other_params(self) -> None:
         node = _make_node()
@@ -539,7 +553,7 @@ class TestAfterIncomingConnection:
             node.after_incoming_connection(source_node, source_param, node._display_param)
 
         # still placeholder choices only — config never connected via the hook
-        assert node._get_options_choices(node._display_param) == [""]
+        assert node._get_options_choices(node._display_param) == [DEFAULT_SENTINEL]
 
 
 class TestAfterIncomingConnectionRemoved:
@@ -553,9 +567,9 @@ class TestAfterIncomingConnectionRemoved:
             node.after_incoming_connection(source_node, source_param, node._config_param)
             node.after_incoming_connection_removed(source_node, source_param, node._config_param)
 
-        assert node._get_options_choices(node._display_param) == [""]
-        assert node._get_options_choices(node._source_colorspace_param) == [""]
-        assert node._get_options_choices(node._view_param) == [""]
+        assert node._get_options_choices(node._display_param) == [DEFAULT_SENTINEL]
+        assert node._get_options_choices(node._source_colorspace_param) == [DEFAULT_SENTINEL]
+        assert node._get_options_choices(node._view_param) == [DEFAULT_SENTINEL]
 
     def test_shows_no_config_message_on_disconnect(self) -> None:
         node = _make_node()
@@ -598,3 +612,474 @@ class TestAfterIncomingConnectionRemoved:
 
         # choices should still be populated
         assert len(node._get_options_choices(node._display_param)) > 0
+
+
+# ---------------------------------------------------------------------------
+# <default> sentinel
+# ---------------------------------------------------------------------------
+
+
+def _resolved(**overrides: object) -> ResolvedColorParams:
+    """Build a ResolvedColorParams with plausible values for patching the resolver."""
+    defaults: dict[str, object] = {
+        "working_space": "ACEScg",
+        "source_colorspace": "ACEScg",
+        "display": "sRGB - Display",
+        "view": "ACES 1.0 - SDR Video",
+        "config_path": None,
+        "sources": {
+            "working_space": "config-role",
+            "source_colorspace": "config-role",
+            "display": "config-default-display",
+            "view": "config-default-view",
+        },
+        "warnings": (),
+    }
+    defaults.update(overrides)
+    return ResolvedColorParams(**defaults)  # type: ignore[arg-type]
+
+
+class TestSentinelChoices:
+    def test_sentinel_is_the_first_choice_without_a_config(self) -> None:
+        node = _make_node()
+        for param in (node._source_colorspace_param, node._display_param, node._view_param):
+            assert node._get_options_choices(param)[0] == DEFAULT_SENTINEL
+
+    def test_sentinel_is_the_first_choice_with_a_config(self) -> None:
+        node = _make_node()
+        mock_config = _mock_ocio_config()
+
+        with patch("opencolorio.nodes.config.ocio_color_parameters.load_ocio_config", return_value=mock_config):
+            node.after_value_set(node._config_param, _make_config_artifact())
+
+        for param in (node._source_colorspace_param, node._display_param, node._view_param):
+            assert node._get_options_choices(param)[0] == DEFAULT_SENTINEL
+
+    def test_real_choices_still_follow_the_sentinel(self) -> None:
+        node = _make_node()
+        mock_config = _mock_ocio_config()
+
+        with patch("opencolorio.nodes.config.ocio_color_parameters.load_ocio_config", return_value=mock_config):
+            node.after_value_set(node._config_param, _make_config_artifact())
+
+        choices = node._get_options_choices(node._source_colorspace_param)
+        assert "ACEScg" in choices
+        assert "scene_linear" in choices
+
+    def test_clearing_the_config_leaves_only_the_sentinel(self) -> None:
+        node = _make_node()
+        mock_config = _mock_ocio_config()
+
+        with patch("opencolorio.nodes.config.ocio_color_parameters.load_ocio_config", return_value=mock_config):
+            node.after_value_set(node._config_param, _make_config_artifact())
+        node.after_value_set(node._config_param, None)
+
+        assert node._get_options_choices(node._display_param) == [DEFAULT_SENTINEL]
+
+
+class TestSentinelSurvivesOptionsTrait:
+    def test_options_trait_allows_custom_values(self) -> None:
+        # Without allow_custom the trait's converter rewrites any off-list value
+        # to choices[0], which would mangle the sentinel on load.
+        node = _make_node()
+        for param in (node._source_colorspace_param, node._display_param, node._view_param):
+            traits = list(param.find_elements_by_type(Options))
+            assert traits
+            assert traits[0].allow_custom is True
+
+    def test_sentinel_survives_a_choices_refresh(self) -> None:
+        node = _make_node()
+        mock_config = _mock_ocio_config()
+
+        with patch("opencolorio.nodes.config.ocio_color_parameters.load_ocio_config", return_value=mock_config):
+            node.after_value_set(node._config_param, _make_config_artifact())
+
+        assert node.get_parameter_value("source_colorspace") == DEFAULT_SENTINEL
+
+    def test_an_explicit_value_survives_a_choices_refresh(self) -> None:
+        node = _make_node()
+        mock_config = _mock_ocio_config()
+
+        with patch("opencolorio.nodes.config.ocio_color_parameters.load_ocio_config", return_value=mock_config):
+            node.after_value_set(node._config_param, _make_config_artifact())
+            node.set_parameter_value("source_colorspace", "ACEScg")
+            node._refresh_all_dropdowns(None)
+
+        assert node.get_parameter_value("source_colorspace") == "ACEScg"
+
+
+class TestValidatorsExemptSentinel:
+    def test_colorspace_validator_ignores_the_sentinel(self) -> None:
+        node = _make_node()
+        mock_config = _mock_ocio_config()
+
+        with patch("opencolorio.nodes.config.ocio_color_parameters.load_ocio_config", return_value=mock_config):
+            node.after_value_set(node._config_param, _make_config_artifact())
+        node._validate_colorspace(DEFAULT_SENTINEL)
+
+        assert node._invalid_colorspace_message.hide is True
+
+    def test_display_validator_ignores_the_sentinel(self) -> None:
+        node = _make_node()
+        mock_config = _mock_ocio_config()
+
+        with patch("opencolorio.nodes.config.ocio_color_parameters.load_ocio_config", return_value=mock_config):
+            node.after_value_set(node._config_param, _make_config_artifact())
+        node._validate_display(DEFAULT_SENTINEL)
+
+        assert node._invalid_display_message.hide is True
+
+    def test_view_validator_ignores_the_sentinel(self) -> None:
+        node = _make_node()
+        mock_config = _mock_ocio_config()
+
+        with patch("opencolorio.nodes.config.ocio_color_parameters.load_ocio_config", return_value=mock_config):
+            node.after_value_set(node._config_param, _make_config_artifact())
+        node._validate_view(DEFAULT_SENTINEL)
+
+        assert node._invalid_view_message.hide is True
+
+    def test_an_unknown_value_is_still_reported(self) -> None:
+        node = _make_node()
+        mock_config = _mock_ocio_config()
+
+        with patch("opencolorio.nodes.config.ocio_color_parameters.load_ocio_config", return_value=mock_config):
+            node.after_value_set(node._config_param, _make_config_artifact())
+        node._validate_colorspace("Not A Real Space")
+
+        assert node._invalid_colorspace_message.hide is False
+
+
+class TestBlankIsAnError:
+    def test_a_blank_parameter_raises(self) -> None:
+        node = _make_node()
+        node.set_parameter_value("display", "")
+
+        with pytest.raises(ValueError, match=DEFAULT_SENTINEL):
+            node.process()
+
+    def test_the_message_names_the_parameter(self) -> None:
+        node = _make_node()
+        node.set_parameter_value("view", "")
+
+        with pytest.raises(ValueError, match="View"):
+            node.process()
+
+    def test_a_blank_parameter_is_not_migrated_to_the_sentinel(self) -> None:
+        # Migrating silently would change rendered output.
+        node = _make_node()
+        node.set_parameter_value("display", "")
+
+        with pytest.raises(ValueError, match=DEFAULT_SENTINEL):
+            node.process()
+
+        assert node.get_parameter_value("display") == ""
+
+    def test_the_node_reports_failure(self) -> None:
+        node = _make_node()
+        node.set_parameter_value("display", "")
+
+        with pytest.raises(ValueError, match=DEFAULT_SENTINEL):
+            node.process()
+
+        assert node.parameter_output_values.get("was_successful") is False
+
+    def test_a_wired_failure_output_still_stops_the_emit(self) -> None:
+        # _handle_failure_exception only raises when Failed has no outgoing
+        # connections; wired, it logs and returns, so process() must stop itself.
+        node = _make_node()
+        node.set_parameter_value("display", "")
+
+        with patch.object(node, "_has_outgoing_connections", return_value=True):
+            node.process()
+
+        assert "color_params" not in node.parameter_output_values
+
+    def test_a_wired_failure_output_is_not_reported_as_success(self) -> None:
+        node = _make_node()
+        node.set_parameter_value("display", "")
+
+        with patch.object(node, "_has_outgoing_connections", return_value=True):
+            node.process()
+
+        assert node.parameter_output_values.get("was_successful") is False
+
+
+class TestSentinelResolvesOnEmit:
+    def test_all_three_sentinels_resolve(self) -> None:
+        node = _make_node()
+
+        with patch(
+            "opencolorio.nodes.config.ocio_color_parameters.resolve_color_params",
+            return_value=_resolved(),
+        ):
+            node.process()
+
+        artifact = node.parameter_output_values["color_params"]
+        assert artifact.source_colorspace == "ACEScg"
+        assert artifact.display == "sRGB - Display"
+        assert artifact.view == "ACES 1.0 - SDR Video"
+
+    def test_one_sentinel_resolves_while_the_others_stay_explicit(self) -> None:
+        node = _make_node()
+        node.set_parameter_value("display", "Rec.1886 Rec.709 - Display")
+        node.set_parameter_value("view", "Video")
+
+        with patch(
+            "opencolorio.nodes.config.ocio_color_parameters.resolve_color_params",
+            return_value=_resolved(
+                source_colorspace="ACEScg",
+                display="Rec.1886 Rec.709 - Display",
+                view="Video",
+            ),
+        ) as resolver:
+            node.process()
+
+        # The explicit values are handed to the resolver, which returns them unchanged.
+        explicit = resolver.call_args.kwargs["explicit"]
+        assert explicit.display == "Rec.1886 Rec.709 - Display"
+        assert explicit.view == "Video"
+        assert explicit.source_colorspace == ""
+
+    def test_a_fully_explicit_node_does_not_call_the_resolver(self) -> None:
+        node = _make_node()
+        node.set_parameter_value("source_colorspace", "ACEScg")
+        node.set_parameter_value("display", "sRGB")
+        node.set_parameter_value("view", "Film")
+
+        with patch("opencolorio.nodes.config.ocio_color_parameters.resolve_color_params") as resolver:
+            node.process()
+
+        resolver.assert_not_called()
+
+    def test_a_fully_explicit_node_emits_its_own_values(self) -> None:
+        node = _make_node()
+        node.set_parameter_value("source_colorspace", "ACEScg")
+        node.set_parameter_value("display", "sRGB")
+        node.set_parameter_value("view", "Film")
+
+        node.process()
+
+        artifact = node.parameter_output_values["color_params"]
+        assert artifact.source_colorspace == "ACEScg"
+        assert artifact.display == "sRGB"
+
+    def test_resolver_warnings_reach_result_details(self) -> None:
+        node = _make_node()
+
+        with patch(
+            "opencolorio.nodes.config.ocio_color_parameters.resolve_color_params",
+            return_value=_resolved(warnings=("something is display-referred",)),
+        ):
+            node.process()
+
+        assert "display-referred" in str(node.parameter_output_values.get("result_details"))
+
+    def test_provenance_reaches_result_details(self) -> None:
+        node = _make_node()
+
+        with patch(
+            "opencolorio.nodes.config.ocio_color_parameters.resolve_color_params",
+            return_value=_resolved(),
+        ):
+            node.process()
+
+        assert "config-default-display" in str(node.parameter_output_values.get("result_details"))
+
+
+class TestDefaultHints:
+    def test_the_resolved_value_appears_in_the_tooltip(self) -> None:
+        # The editor renders placeholder_text as a native HTML placeholder, which
+        # only shows on an empty field. The value is the literal <default>, so the
+        # tooltip and badge are the only places the resolved value can surface.
+        node = _make_node()
+
+        with patch(
+            "opencolorio.nodes.config.ocio_color_parameters.resolve_color_params",
+            return_value=_resolved(),
+        ):
+            node._refresh_default_hints()
+
+        assert "sRGB - Display" in node._display_param.tooltip
+
+    def test_no_placeholder_text_is_written(self) -> None:
+        node = _make_node()
+
+        with patch(
+            "opencolorio.nodes.config.ocio_color_parameters.resolve_color_params",
+            return_value=_resolved(),
+        ):
+            node._refresh_default_hints()
+
+        assert "placeholder_text" not in node._display_param.ui_options
+
+    def test_the_hint_does_not_become_the_value(self) -> None:
+        node = _make_node()
+
+        with patch(
+            "opencolorio.nodes.config.ocio_color_parameters.resolve_color_params",
+            return_value=_resolved(),
+        ):
+            node._refresh_default_hints()
+
+        assert node.get_parameter_value("display") == DEFAULT_SENTINEL
+
+    def test_the_badge_always_carries_a_message(self) -> None:
+        # The editor dereferences badge.message unguarded, so a badge without one
+        # crashes the whole parameter row rather than just failing to render.
+        node = _make_node()
+
+        with patch(
+            "opencolorio.nodes.config.ocio_color_parameters.resolve_color_params",
+            return_value=_resolved(display="", sources={"display": "no-config"}),
+        ):
+            node._refresh_default_hints()
+
+        badge = node._display_param.ui_options.get("badge")
+        assert badge is not None
+        assert badge["message"]
+
+    def test_the_badge_hides_its_clear_button(self) -> None:
+        # Clear calls dismiss_badge(), which only clears a top-level badge and so
+        # cannot clear one sourced from ui_options. Showing the button would offer
+        # the user an action that does nothing.
+        node = _make_node()
+
+        with patch(
+            "opencolorio.nodes.config.ocio_color_parameters.resolve_color_params",
+            return_value=_resolved(),
+        ):
+            node._refresh_default_hints()
+
+        assert node._display_param.ui_options["badge"]["hide_clear_button"] is True
+
+    def test_an_explicit_parameter_keeps_its_original_tooltip(self) -> None:
+        # __init__ runs a hint pass, so capture the authored tooltip by clearing first.
+        node = _make_node()
+        node._clear_hint(node._display_param)
+        original = node._display_param.tooltip
+        node.set_parameter_value("display", "sRGB")
+
+        with patch(
+            "opencolorio.nodes.config.ocio_color_parameters.resolve_color_params",
+            return_value=_resolved(),
+        ):
+            node._refresh_default_hints()
+
+        assert node._display_param.tooltip == original
+
+    def test_the_badge_names_the_layer(self) -> None:
+        node = _make_node()
+
+        with patch(
+            "opencolorio.nodes.config.ocio_color_parameters.resolve_color_params",
+            return_value=_resolved(),
+        ):
+            node._refresh_default_hints()
+
+        badge = node._display_param.ui_options.get("badge")
+        assert badge is not None
+        assert "default display" in badge["message"]
+
+    def test_the_badge_names_the_config(self) -> None:
+        node = _make_node()
+
+        with patch(
+            "opencolorio.nodes.config.ocio_color_parameters.resolve_color_params",
+            return_value=_resolved(config_path="/studio/show.ocio"),
+        ):
+            node._refresh_default_hints()
+
+        badge = node._display_param.ui_options.get("badge")
+        assert badge is not None
+        assert "/studio/show.ocio" in badge["message"]
+
+    def test_an_explicit_parameter_gets_no_hint(self) -> None:
+        node = _make_node()
+        node.set_parameter_value("display", "sRGB")
+
+        with patch(
+            "opencolorio.nodes.config.ocio_color_parameters.resolve_color_params",
+            return_value=_resolved(),
+        ):
+            node._refresh_default_hints()
+
+        assert node._display_param.ui_options.get("placeholder_text") in (None, "")
+        assert node._display_param.ui_options.get("badge") is None
+
+    def test_a_failing_resolver_does_not_break_the_node(self) -> None:
+        node = _make_node()
+
+        with patch(
+            "opencolorio.nodes.config.ocio_color_parameters.resolve_color_params",
+            side_effect=RuntimeError("config exploded"),
+        ):
+            node._refresh_default_hints()  # must not raise
+
+    def test_node_construction_survives_a_failing_resolver(self) -> None:
+        with patch(
+            "opencolorio.nodes.config.ocio_color_parameters.resolve_color_params",
+            side_effect=RuntimeError("config exploded"),
+        ):
+            assert OCIOColorParameters("test_node") is not None
+
+
+class TestHintsAgainstARealConfig:
+    """Hints resolved without mocking the resolver.
+
+    Every other hint test patches resolve_color_params, which cannot show that
+    the hint was asked the wrong question. These load a real builtin config, so
+    the display the hint resolves against is the one the node would emit.
+    """
+
+    def _node_with_config(self) -> OCIOColorParameters:
+        node = _make_node()
+        node.after_value_set(node._config_param, _make_config_artifact(CG_V4_URI))
+        return node
+
+    def test_view_hint_follows_the_chosen_display(self) -> None:
+        # Given a non-default display and a view left on <default>
+        node = self._node_with_config()
+        node.set_parameter_value("display", "Display P3 - Display")
+        node.set_parameter_value("view", DEFAULT_SENTINEL)
+        node._refresh_default_hints()
+
+        # Then the badge names that display's default view, not the config's
+        badge = node._view_param.ui_options["badge"]["message"]
+        assert "ACES 2.0 - SDR 100 nits (P3 D65)" in badge
+        assert "(Rec.709)" not in badge
+
+    def test_the_view_hint_matches_what_process_emits(self) -> None:
+        # The bug this guards: hint and emitted value disagreeing about display.
+        node = self._node_with_config()
+        node.set_parameter_value("display", "Display P3 - Display")
+        node.set_parameter_value("view", DEFAULT_SENTINEL)
+        node._refresh_default_hints()
+        badge = node._view_param.ui_options["badge"]["message"]
+
+        node.process()
+        emitted = node.parameter_output_values["color_params"].view
+
+        assert f"`{emitted}`" in badge
+
+    def test_views_are_offered_under_the_default_display(self) -> None:
+        # getViews("<default>") is empty, so a naive refresh leaves nothing to pick
+        node = self._node_with_config()
+        node.set_parameter_value("display", DEFAULT_SENTINEL)
+
+        choices = node._get_options_choices(node._view_param)
+
+        assert choices != [DEFAULT_SENTINEL]
+        assert "ACES 2.0 - SDR 100 nits (Rec.709)" in choices
+
+    def test_an_explicit_view_survives_returning_to_the_default_display(self) -> None:
+        # Given a view chosen under an explicit display
+        node = self._node_with_config()
+        node.set_parameter_value("display", "Rec.1886 Rec.709 - Display")
+        node.set_parameter_value("view", "Un-tone-mapped")
+
+        # When the display goes back to the sentinel
+        node.set_parameter_value("display", DEFAULT_SENTINEL)
+
+        # Then the view the user picked is not silently discarded
+        assert node.get_parameter_value("view") == "Un-tone-mapped"

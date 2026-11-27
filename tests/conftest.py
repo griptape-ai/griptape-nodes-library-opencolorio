@@ -19,3 +19,14 @@ def mock_griptape_nodes():
     # behaviour when no failure output is wired up.
     with patch("griptape_nodes.retained_mode.griptape_nodes.GriptapeNodes", mock):
         yield mock
+
+
+@pytest.fixture(autouse=True)
+def isolate_ocio_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove $OCIO so tests never pick up the developer's own config.
+
+    The resolver's whole fallback chain turns on whether $OCIO is set, and
+    several tests assert the unset behaviour. Leaving the real value in place
+    makes those results depend on the machine the suite runs on.
+    """
+    monkeypatch.delenv("OCIO", raising=False)
